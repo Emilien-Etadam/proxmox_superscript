@@ -181,6 +181,7 @@ SSHEOF
 #
 # Paramètres : aucun (nœud cible et schedule sur stdin, défauts pve2 et */15).
 # Effets de bord : crée des jobs pvesr, lance pvesr run en arrière-plan, ajoute des ressources HA.
+# Les CT avec bind mounts sont ignorés pour la réplication ; les échecs pvesr/HA n'interrompent pas le script.
 setup_replication_ha() {
     local target_node="pve2"
     local schedule="*/15"
@@ -205,49 +206,57 @@ setup_replication_ha() {
         grep -qw "$1" <<<"$2"
     }
 
-    local vmid
-    local ct_ids
-    mapfile -t ct_ids < <(pct list | awk 'NR>1 {print $1}')
-    for vmid in "${ct_ids[@]}"; do
-        local type="ct"
+    # Détecte un point de montage bind dans la config pct du conteneur.
+    #
+    # Paramètres : $1 — CTID.
+    # Retour : 0 si bind mount présent, 1 sinon.
+    has_bind_mount() {
+        pct config "$1" 2>/dev/null | grep -qE '^mp[0-9]+:.*type=bind|^mp[0-9]+: /'
+    }
+
+    # Applique réplication et HA pour un CT ou une VM (id + type).
+    #
+    # Paramètres : $1 — VMID/CTID ; $2 — type (`ct` ou `vm`).
+    # Effets de bord : pvesr create-local-job/run, ha-manager add (erreurs journalisées, pas de sortie set -e).
+    process_id() {
+        local vmid="$1"
+        local type="$2"
         local fqid="${type}:${vmid}"
 
         if ! in_list "$vmid" "$repl_resources"; then
-            echo "[+] Création réplication pour $fqid vers $target_node"
-            pvesr create-local-job "${vmid}-0" "$target_node" --schedule "$schedule"
-            pvesr run --id "${vmid}-0" &
+            if [[ "$type" == "ct" ]] && has_bind_mount "$vmid"; then
+                echo "[!] SKIP réplication $fqid (bind mount détecté)"
+            else
+                echo "[+] Création réplication pour $fqid vers $target_node"
+                if pvesr create-local-job "${vmid}-0" "$target_node" --schedule "$schedule" 2>&1; then
+                    pvesr run --id "${vmid}-0" 2>&1 &
+                else
+                    echo "[!] ERREUR réplication $fqid"
+                fi
+            fi
         else
             echo "[=] Réplication déjà OK pour $fqid"
         fi
 
         if ! in_list "$fqid" "$ha_resources"; then
             echo "[+] Ajout HA pour $fqid"
-            ha-manager add "$fqid" --state started
+            ha-manager add "$fqid" --state started 2>&1 || echo "[!] ERREUR HA $fqid"
         else
             echo "[=] HA déjà OK pour $fqid"
         fi
+    }
+
+    local vmid
+    local ct_ids
+    mapfile -t ct_ids < <(pct list | awk 'NR>1 {print $1}')
+    for vmid in "${ct_ids[@]}"; do
+        process_id "$vmid" "ct"
     done
 
     local vm_ids
     mapfile -t vm_ids < <(qm list 2>/dev/null | awk 'NR>1 {print $1}')
     for vmid in "${vm_ids[@]}"; do
-        local type="vm"
-        local fqid="${type}:${vmid}"
-
-        if ! in_list "$vmid" "$repl_resources"; then
-            echo "[+] Création réplication pour $fqid vers $target_node"
-            pvesr create-local-job "${vmid}-0" "$target_node" --schedule "$schedule"
-            pvesr run --id "${vmid}-0" &
-        else
-            echo "[=] Réplication déjà OK pour $fqid"
-        fi
-
-        if ! in_list "$fqid" "$ha_resources"; then
-            echo "[+] Ajout HA pour $fqid"
-            ha-manager add "$fqid" --state started
-        else
-            echo "[=] HA déjà OK pour $fqid"
-        fi
+        process_id "$vmid" "vm"
     done
 
     echo "[*] Attente fin des réplications initiales..."
