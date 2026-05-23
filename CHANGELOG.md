@@ -9,6 +9,8 @@ et ce projet respecte [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Added
 
+- Option menu **6** : prompt bash root dans le CT via `/etc/profile.d/lxc-postconf-prompt.sh`, couleur ANSI dérivée du CTID.
+
 ### Changed
 
 ### Deprecated

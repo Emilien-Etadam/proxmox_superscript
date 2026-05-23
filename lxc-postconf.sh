@@ -55,6 +55,7 @@ show_menu() {
     echo "3) Injecter une clé SSH (depuis authorized_keys hôte)"
     echo "4) Injecter une clé SSH (saisie manuelle)"
     echo "5) Réplication + HA (tous les CT/VM)"
+    echo "6) Personnaliser le prompt root (couleur selon CTID)"
     echo "0) Quitter"
     echo ""
 }
@@ -177,6 +178,32 @@ SSHEOF
     echo "[OK] Clé injectée."
 }
 
+# Installe un PS1 bash root dont la couleur ANSI dépend du CTID (stable par conteneur).
+#
+# Paramètres : aucun (sélection CT via select_ct).
+# Effets de bord : écrit /etc/profile.d/lxc-postconf-prompt.sh ; retire un ancien bloc .bashrc le cas échéant.
+setup_custom_ps1() {
+    select_ct || return 1
+    local color=$(( 31 + (CTID % 8) ))
+    echo "[*] Configuration du prompt root (CTID=$CTID, couleur ANSI $color)..."
+
+    pct exec "$CTID" -- env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root bash -c "
+        install -d -m 755 /etc/profile.d
+        cat > /etc/profile.d/lxc-postconf-prompt.sh <<'PROMPT_EOF'
+# lxc-postconf: PS1 personnalisé (couleur dérivée du CTID, CTID=${CTID})
+if [ -n \"\${BASH_VERSION:-}\" ]; then
+  PS1=\"\\n\\[\\e[1;${color}m\\]===[ \\u@\\h \\w ]===\\[\\e[0m\\]\\n# \"
+  export PS1
+fi
+PROMPT_EOF
+        chmod 644 /etc/profile.d/lxc-postconf-prompt.sh
+        if [ -f /root/.bashrc ] && grep -qF 'lxc-postconf: PS1 personnalisé' /root/.bashrc 2>/dev/null; then
+            sed -i '/# lxc-postconf: PS1 personnalisé/,/^PS1=/d' /root/.bashrc
+        fi
+    "
+    echo "[OK] Prompt installé (/etc/profile.d/lxc-postconf-prompt.sh). Ouvrez une nouvelle session shell."
+}
+
 # Configure la réplication ZFS (pvesr) et le HA pour tous les CT et VM du cluster.
 #
 # Paramètres : aucun (nœud cible et schedule sur stdin, défauts pve2 et */15).
@@ -275,6 +302,7 @@ while true; do
         3) inject_ssh_from_host ;;
         4) inject_ssh_manual ;;
         5) setup_replication_ha ;;
+        6) setup_custom_ps1 ;;
         0) exit 0 ;;
         *) echo "Choix invalide." ;;
     esac

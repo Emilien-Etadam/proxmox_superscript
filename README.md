@@ -60,9 +60,10 @@ Nouveau nom : app-web-prod
 | **3** | Clé SSH depuis l'hôte | Liste les lignes de `/root/.ssh/authorized_keys` sur l'hôte ; injecte une ligne, ou toutes (`all`), dans le CT. |
 | **4** | Clé SSH manuelle | Demande de coller une clé publique SSH et l'ajoute à `/root/.ssh/authorized_keys` du CT. |
 | **5** | Réplication + HA | Pour **chaque** CT et VM : crée un job `pvesr` vers le nœud cible (défaut `pve2`, schedule `*/15`) si absent, lance une sync initiale, puis enregistre la ressource dans `ha-manager` si absente. |
+| **6** | Prompt root coloré | Installe `/etc/profile.d/lxc-postconf-prompt.sh` dans le CT : invite `===[ user@host cwd ]===` avec une couleur **ANSI stable** calculée à partir du **CTID** (`31 + CTID % 8`). Visible après une nouvelle session shell (console, SSH, `pct enter`). |
 | **0** | Quitter | Termine le script. |
 
-Les options **1** à **4** demandent d'abord un **CTID** ; si le conteneur est arrêté, le script propose de le démarrer.
+Les options **1** à **4** et **6** demandent d'abord un **CTID** ; si le conteneur est arrêté, le script propose de le démarrer.
 
 ## Contribution
 
