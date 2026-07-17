@@ -1,6 +1,6 @@
 # lxc-postconf
 
-Script bash interactif de post-configuration pour conteneurs LXC et machines virtuelles sur **Proxmox VE 8.x**. Exécuté en root sur l'hôte Proxmox, il simplifie les tâches courantes après création d'un CT : renommage, auto-login console, injection de clés SSH, et configuration groupée réplication ZFS + HA sur un cluster à deux nœuds.
+Script bash interactif de post-configuration pour conteneurs LXC et machines virtuelles sur **Proxmox VE 8.x**. Exécuté en root sur l'hôte Proxmox, il simplifie les tâches courantes après création d'un CT : renommage, auto-login console, injection de clés SSH, nettoyage d'espace disque (avec ou sans Docker), et configuration groupée réplication ZFS + HA sur un cluster à deux nœuds.
 
 ## Prérequis
 
@@ -38,6 +38,8 @@ Le script affiche un menu en boucle jusqu'à la sortie (`0`).
 3) Injecter une clé SSH (depuis authorized_keys hôte)
 4) Injecter une clé SSH (saisie manuelle)
 5) Réplication + HA (tous les CT/VM)
+6) Personnaliser le prompt root (couleur selon CTID)
+7) Nettoyer un conteneur (espace disque)
 0) Quitter
 
 Choix : 1
@@ -61,9 +63,10 @@ Nouveau nom : app-web-prod
 | **4** | Clé SSH manuelle | Demande de coller une clé publique SSH et l'ajoute à `/root/.ssh/authorized_keys` du CT. |
 | **5** | Réplication + HA | Pour **chaque** CT et VM : crée un job `pvesr` vers le nœud cible (défaut `pve2`, schedule `*/15`) si absent, lance une sync initiale, puis enregistre la ressource dans `ha-manager` si absente. |
 | **6** | Prompt root coloré | Installe `/etc/profile.d/lxc-postconf-prompt.sh` dans le CT : invite `===[ user@host cwd ]===` avec une couleur **ANSI stable** calculée à partir du **CTID** (`31 + CTID % 8`). Visible après une nouvelle session shell (console, SSH, `pct enter`). |
+| **7** | Nettoyer un conteneur | Libère de l'espace disque : caches paquets (`apt`/`apk`/`dnf`/`yum`), journaux (`journalctl` + fichiers rotatés), `/tmp` et `/var/tmp`. Si **Docker** ou **Podman** est présent, prune conteneurs/images/réseaux/build cache (volumes optionnels sur confirmation). Affiche l'usage disque avant/après. |
 | **0** | Quitter | Termine le script. |
 
-Les options **1** à **4** et **6** demandent d'abord un **CTID** ; si le conteneur est arrêté, le script propose de le démarrer.
+Les options **1** à **4**, **6** et **7** demandent d'abord un **CTID** ; si le conteneur est arrêté, le script propose de le démarrer.
 
 ## Contribution
 

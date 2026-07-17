@@ -56,6 +56,7 @@ show_menu() {
     echo "4) Injecter une clé SSH (saisie manuelle)"
     echo "5) Réplication + HA (tous les CT/VM)"
     echo "6) Personnaliser le prompt root (couleur selon CTID)"
+    echo "7) Nettoyer un conteneur (espace disque)"
     echo "0) Quitter"
     echo ""
 }
@@ -204,6 +205,106 @@ PROMPT_EOF
     echo "[OK] Prompt installé (/etc/profile.d/lxc-postconf-prompt.sh). Ouvrez une nouvelle session shell."
 }
 
+# Libère de l'espace disque dans un conteneur : caches paquets, journaux, temp ;
+# si Docker (ou Podman) est présent, prune les ressources inutilisées.
+#
+# Paramètres : aucun (sélection CT via select_ct ; confirmation stdin pour volumes Docker).
+# Effets de bord : supprime caches/journaux/temp dans le CT ; éventuellement prune Docker/Podman.
+# Retour : 0 si succès, 1 si annulation ou CT inaccessible.
+cleanup_ct() {
+    select_ct || return 1
+
+    local before
+    before=$(run_in_ct "df -h / | awk 'NR==2 {print \$3\" utilisés / \"\$2\" (\"\$5\" )\"}'" 2>/dev/null || echo "indisponible")
+    echo "[*] Espace / avant nettoyage : $before"
+
+    local has_docker=0
+    if run_in_ct "command -v docker >/dev/null 2>&1"; then
+        has_docker=1
+        echo "[*] Docker détecté dans le CT."
+    elif run_in_ct "command -v podman >/dev/null 2>&1"; then
+        has_docker=1
+        echo "[*] Podman détecté dans le CT (nettoyage équivalent)."
+    else
+        echo "[*] Pas de Docker/Podman : nettoyage système uniquement."
+    fi
+
+    local prune_volumes=0
+    if [[ "$has_docker" -eq 1 ]]; then
+        local confirm_vol
+        read -rp "Supprimer aussi les volumes Docker/Podman inutilisés ? (o/n) : " confirm_vol
+        [[ "$confirm_vol" == "o" ]] && prune_volumes=1
+    fi
+
+    local confirm
+    read -rp "Lancer le nettoyage sur CT $CTID ? (o/n) : " confirm
+    if [[ "$confirm" != "o" ]]; then
+        echo "[!] Annulé."
+        return 1
+    fi
+
+    echo "[*] Nettoyage en cours..."
+    # PRUNE_VOLUMES est injecté depuis l'hôte ; le reste du script est auto-contenu.
+    run_in_ct "
+        PRUNE_VOLUMES=${prune_volumes}
+
+        echo '--- Caches paquets ---'
+        if command -v apt-get >/dev/null 2>&1; then
+            apt-get autoremove -y 2>/dev/null || true
+            apt-get clean 2>/dev/null || true
+            rm -rf /var/lib/apt/lists/* 2>/dev/null || true
+        elif command -v apk >/dev/null 2>&1; then
+            apk cache clean 2>/dev/null || true
+        elif command -v dnf >/dev/null 2>&1; then
+            dnf clean all 2>/dev/null || true
+        elif command -v yum >/dev/null 2>&1; then
+            yum clean all 2>/dev/null || true
+        fi
+
+        echo '--- Journaux ---'
+        if command -v journalctl >/dev/null 2>&1; then
+            journalctl --vacuum-time=7d 2>/dev/null || true
+            journalctl --vacuum-size=100M 2>/dev/null || true
+        fi
+        find /var/log -type f \( -name '*.gz' -o -name '*.old' -o -name '*.[0-9]' -o -name '*.[0-9].gz' \) -delete 2>/dev/null || true
+        find /var/log -type f -name '*.log' -exec truncate -s 0 {} + 2>/dev/null || true
+
+        echo '--- Fichiers temporaires ---'
+        rm -rf /tmp/* /var/tmp/* 2>/dev/null || true
+        if command -v apt-get >/dev/null 2>&1; then
+            rm -rf /var/cache/apt/archives/* /var/cache/apt/archives/partial/* 2>/dev/null || true
+        fi
+
+        if command -v docker >/dev/null 2>&1; then
+            echo '--- Docker ---'
+            docker container prune -f 2>/dev/null || true
+            docker image prune -af 2>/dev/null || true
+            docker network prune -f 2>/dev/null || true
+            docker builder prune -af 2>/dev/null || true
+            if [ \"\$PRUNE_VOLUMES\" = \"1\" ]; then
+                docker volume prune -f 2>/dev/null || true
+            fi
+            docker system df 2>/dev/null || true
+        elif command -v podman >/dev/null 2>&1; then
+            echo '--- Podman ---'
+            podman container prune -f 2>/dev/null || true
+            podman image prune -af 2>/dev/null || true
+            podman network prune -f 2>/dev/null || true
+            if [ \"\$PRUNE_VOLUMES\" = \"1\" ]; then
+                podman volume prune -f 2>/dev/null || true
+            fi
+            podman system df 2>/dev/null || true
+        fi
+
+        sync
+        echo '--- Terminé ---'
+    "
+
+    local after
+    after=$(run_in_ct "df -h / | awk 'NR==2 {print \$3\" utilisés / \"\$2\" (\"\$5\" )\"}'" 2>/dev/null || echo "indisponible")
+    echo "[OK] Nettoyage terminé. Espace / avant : $before | après : $after"
+}
+
 # Configure la réplication ZFS (pvesr) et le HA pour tous les CT et VM du cluster.
 #
 # Paramètres : aucun (nœud cible et schedule sur stdin, défauts pve2 et */15).
@@ -303,6 +404,7 @@ while true; do
         4) inject_ssh_manual ;;
         5) setup_replication_ha ;;
         6) setup_custom_ps1 ;;
+        7) cleanup_ct ;;
         0) exit 0 ;;
         *) echo "Choix invalide." ;;
     esac
