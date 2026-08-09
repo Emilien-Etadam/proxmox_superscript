@@ -101,7 +101,7 @@ Les options **1**, **2**, **3** et **5** demandent d'abord un **CTID** ; si le c
 | Choix | Fonction | Description |
 |-------|----------|-------------|
 | **1** | Nettoyer un conteneur | Nettoyage **local** d'un CT : caches paquets, journaux, temp ; prune Docker/Podman si détecté (volumes optionnels). Affiche l'usage disque avant/après. |
-| **2** | Clean and update LXC | Confirme puis exécute [`clean-lxcs.sh`](https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve/clean-lxcs.sh) : nettoyage multi-CT **puis** `apt update` (sortie verbeuse normale en fin de run). |
+| **2** | Clean and update LXC | Pré-démarre les CT arrêtés (sinon le script distant abort sur `container not running`), puis exécute [`clean-lxcs.sh`](https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve/clean-lxcs.sh) : nettoyage multi-CT **puis** `apt update`. |
 | **3** | Santé disques SMART | Confirme puis exécute [`disk-health.sh`](https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve/disk-health.sh) sur l'**hôte** (rapport SMART, self-test court optionnel). |
 | **0** | Retour | Revient au menu principal. |
 

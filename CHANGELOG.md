@@ -21,6 +21,8 @@ et ce projet respecte [Semantic Versioning](https://semver.org/lang/fr/).
 - Options SSH hôte / manuelle fusionnées en une seule entrée avec sous-choix.
 - README : section Mise à jour, documentation du sous-menu Maintenance.
 - Maintenance : `clean-lxcs` renommé **Clean and update** (le script distant nettoie puis fait `apt update`).
+- Clean and update : pré-démarrage des CT arrêtés avant l'appel community-scripts (évite l'abort `container not running`).
+- Message d'erreur community-scripts : distinction code 255 (CT non running) vs annulation whiptail.
 
 ### Deprecated
 
