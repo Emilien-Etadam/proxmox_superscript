@@ -17,6 +17,7 @@
 #
 # Licence: MIT — Copyright (c) Emilien-Etadam
 # SPDX-License-Identifier: MIT
+# lxc-postconf-revision: 2026-08-09-skip-stopped-v2
 
 set -euo pipefail
 
@@ -58,6 +59,7 @@ select_ct() {
 show_menu() {
     echo ""
     echo "=== Post-config Proxmox ==="
+    echo "(rev skip-stopped-v2)"
     echo "1) Renommer un conteneur"
     echo "2) Auto-login root sur console tty"
     echo "3) Injecter une clé SSH"
@@ -352,40 +354,73 @@ cleanup_ct() {
     echo "[OK] Nettoyage terminé. Espace / avant : $before | après : $after"
 }
 
-# Injecte dans clean-lxcs.sh l'exclusion automatique des CT non running.
+# Modifie clean-lxcs.sh pour ignorer les CT non running (pas de pct start).
 #
 # Paramètres : $1 — corps du script distant.
-# Retour : 0 et écrit le script modifié sur stdout ; 1 si marqueur introuvable.
+# Retour : 0 et écrit le script modifié sur stdout ; 1 si motif introuvable.
 patch_clean_lxcs_skip_stopped() {
     local script_body="$1"
-    local marker="function run_lxc_clean"
+    local tmp_in tmp_out
 
-    if [[ "$script_body" != *"$marker"* ]]; then
-        echo "ERREUR : impossible d'appliquer le patch skip-stopped (marqueur absent)." >&2
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "ERREUR : python3 est requis pour patcher clean-lxcs (skip-stopped)." >&2
         return 1
     fi
 
-    local injection
-    injection=$(
-        cat <<'PATCH_EOF'
+    tmp_in=$(mktemp)
+    tmp_out=$(mktemp)
+    printf '%s\n' "$script_body" >"$tmp_in"
 
-# --- lxc-postconf: skip LXC that are not running (do not pct start) ---
-for __postconf_ct in $(pct list | awk 'NR>1 {print $1}'); do
-  __postconf_st=$(pct status "$__postconf_ct" 2>/dev/null || true)
-  if [[ "$__postconf_st" != "status: running" ]]; then
-    excluded_containers="${excluded_containers} ${__postconf_ct}"
-  fi
-done
-# --- end lxc-postconf ---
+    if ! python3 - "$tmp_in" "$tmp_out" <<'PY'
+import re
+import sys
+from pathlib import Path
 
-PATCH_EOF
+src = Path(sys.argv[1]).read_text()
+
+pattern = re.compile(
+    r'(?P<indent>[ \t]*)if \[ "\$template" == "false" \] && \[ "\$status" == "status: stopped" \]; then\n'
+    r'.*?'
+    r'pct shutdown "\$container" &\n'
+    r'[ \t]*elif \[ "\$status" == "status: running" \]; then\n'
+    r'(?P<run_indent>[ \t]*)run_lxc_clean "\$container"\n'
+    r'[ \t]*fi',
+    re.DOTALL,
+)
+
+def repl(match: re.Match) -> str:
+    ind = match.group("indent")
+    run_ind = match.group("run_indent")
+    return (
+        f'{ind}if [ "$status" != "status: running" ]; then\n'
+        f'{ind}  header_info\n'
+        f'{ind}  echo -e "${{BL}}[Info]${{GN}} Skipping ${{BL}}$container${{CL}}${{GN}} (not running)${{CL}}"\n'
+        f'{ind}  sleep 1\n'
+        f'{ind}  continue\n'
+        f'{ind}elif [ "$status" == "status: running" ]; then\n'
+        f'{run_ind}run_lxc_clean "$container"\n'
+        f'{ind}fi'
     )
 
-    local prefix="${script_body%%"${marker}"*}"
-    local suffix="${script_body#*"${marker}"}"
-    # $(...) retire les newlines finales de l'injection : en forcer une avant le marqueur,
-    # sinon "function run_lxc_clean" se retrouve commentée et local $1 explose sous set -u.
-    printf '%s\n%s%s' "${prefix}${injection}" "${marker}" "${suffix}"
+new, n = pattern.subn(repl, src, count=1)
+if n != 1:
+    print("ERREUR : motif start-stopped introuvable dans clean-lxcs distant.", file=sys.stderr)
+    sys.exit(1)
+
+if re.search(r'#.*function run_lxc_clean', new):
+    print("ERREUR : patch skip-stopped corrompu (function commentée).", file=sys.stderr)
+    sys.exit(1)
+
+Path(sys.argv[2]).write_text(new if new.endswith("\n") else new + "\n")
+
+PY
+    then
+        rm -f "$tmp_in" "$tmp_out"
+        return 1
+    fi
+
+    cat "$tmp_out"
+    rm -f "$tmp_in" "$tmp_out"
 }
 
 # Télécharge et exécute un script community-scripts/ProxmoxVE sur l'hôte.
@@ -444,14 +479,21 @@ run_community_script() {
         return 1
     fi
 
+    local script_file
+    script_file=$(mktemp)
     if [[ "$patch_mode" == "skip-stopped" ]]; then
-        if ! script_body=$(patch_clean_lxcs_skip_stopped "$script_body"); then
+        if ! patch_clean_lxcs_skip_stopped "$script_body" >"$script_file"; then
+            rm -f "$script_file"
             return 1
         fi
+        echo "[OK] Patch skip-stopped appliqué (CT non running ignorés)."
+    else
+        printf '%s\n' "$script_body" >"$script_file"
     fi
 
     local rc=0
-    bash -c "$script_body" || rc=$?
+    bash "$script_file" || rc=$?
+    rm -f "$script_file"
     if [[ "$rc" -eq 0 ]]; then
         echo "[OK] $label terminé."
     else
