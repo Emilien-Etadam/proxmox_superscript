@@ -25,7 +25,6 @@ CTID=""
 
 # Scripts community-scripts/ProxmoxVE (exécutés sur l'hôte via curl | bash).
 readonly COMMUNITY_SCRIPTS_BASE_URL="https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve"
-readonly COMMUNITY_UPDATE_LXCS_URL="${COMMUNITY_SCRIPTS_BASE_URL}/update-lxcs.sh"
 readonly COMMUNITY_CLEAN_LXCS_URL="${COMMUNITY_SCRIPTS_BASE_URL}/clean-lxcs.sh"
 readonly COMMUNITY_DISK_HEALTH_URL="${COMMUNITY_SCRIPTS_BASE_URL}/disk-health.sh"
 
@@ -77,9 +76,8 @@ show_maintenance_menu() {
     echo ""
     echo "=== Maintenance ==="
     echo "1) Nettoyer un conteneur (espace disque)"
-    echo "2) Mettre à jour tous les LXC (community-scripts)"
-    echo "3) Nettoyer tous les LXC (community-scripts)"
-    echo "4) Santé disques SMART (community-scripts)"
+    echo "2) Clean and update tous les LXC (community-scripts)"
+    echo "3) Santé disques SMART (community-scripts)"
     echo "0) Retour"
     echo ""
 }
@@ -408,21 +406,86 @@ run_community_script() {
     if [[ "$rc" -eq 0 ]]; then
         echo "[OK] $label terminé."
     else
-        echo "[!] $label s'est arrêté (code $rc : annulation whiptail ou erreur)."
+        echo "[!] $label s'est arrêté (code $rc)."
+        if [[ "$rc" -eq 255 ]]; then
+            echo "[!] Cause fréquente : un CT n'était pas running (pct exec a échoué)."
+            echo "[!] Astuce : démarrez le CT (pct start CTID), ou cochez-le pour l'exclure dans whiptail."
+        else
+            echo "[!] Annulation whiptail, ou erreur dans le script distant."
+        fi
     fi
     return 0
 }
 
-# Lance update-lxcs.sh (mise à jour paquets de tous les LXC, UI whiptail).
-# Retour : toujours 0 (le menu principal ne doit pas s'interrompre sous set -e).
-run_community_update_lxcs() {
-    run_community_script "update-lxcs" "$COMMUNITY_UPDATE_LXCS_URL" || true
+# Liste les CT non running (hors templates) et propose de les démarrer avant clean-lxcs.
+#
+# Paramètres : aucun.
+# Effets de bord : peut démarrer des CT via pct start et attendre le statut running.
+# Retour : 0 pour continuer vers le script distant ; 1 si annulation / échec démarrage.
+ensure_lxcs_running_for_clean() {
+    local stopped_ids=()
+    local ctid status
+
+    while read -r ctid; do
+        [[ -z "$ctid" ]] && continue
+        if pct config "$ctid" 2>/dev/null | grep -q '^template:'; then
+            continue
+        fi
+        status=$(pct status "$ctid" 2>/dev/null | awk '{print $2}') || continue
+        if [[ "$status" != "running" ]]; then
+            stopped_ids+=("$ctid")
+        fi
+    done < <(pct list | awk 'NR>1 {print $1}')
+
+    if [[ "${#stopped_ids[@]}" -eq 0 ]]; then
+        return 0
+    fi
+
+    echo "[!] CT arrêtés détectés :"
+    local id
+    for id in "${stopped_ids[@]}"; do
+        echo "    - $id"
+    done
+    echo "[!] clean-lxcs (distant) s'arrête au premier CT inaccessible (ex. « container not running »)."
+    local confirm
+    read -rp "Démarrer ces CT et attendre qu'ils soient ready ? (o/n) : " confirm
+    if [[ "$confirm" != "o" ]]; then
+        read -rp "Continuer sans pré-démarrage (risque d'échec) ? (o/n) : " confirm
+        [[ "$confirm" == "o" ]] && return 0
+        echo "[!] Annulé."
+        return 1
+    fi
+
+    for id in "${stopped_ids[@]}"; do
+        echo "[*] Démarrage CT $id..."
+        if ! pct start "$id"; then
+            echo "ERREUR : impossible de démarrer CT $id."
+            echo "[!] Excluez-le dans whiptail, ou corrigez le conteneur, puis réessayez."
+            return 1
+        fi
+        local waited=0
+        while [[ "$(pct status "$id" 2>/dev/null | awk '{print $2}')" != "running" ]]; do
+            waited=$((waited + 1))
+            if [[ "$waited" -gt 60 ]]; then
+                echo "ERREUR : CT $id n'est pas running après 60s."
+                return 1
+            fi
+            sleep 1
+        done
+        # Marge pour l'init guest (hostname / apt disponibles via pct exec).
+        sleep 3
+        echo "[OK] CT $id running."
+    done
+    return 0
 }
 
-# Lance clean-lxcs.sh (nettoyage logs/cache + apt update sur les LXC sélectionnés).
+# Lance clean-lxcs.sh (nettoyage + apt update sur les LXC sélectionnés).
 # Retour : toujours 0 (le menu principal ne doit pas s'interrompre sous set -e).
-run_community_clean_lxcs() {
-    run_community_script "clean-lxcs" "$COMMUNITY_CLEAN_LXCS_URL" || true
+run_community_clean_and_update_lxcs() {
+    if ! ensure_lxcs_running_for_clean; then
+        return 0
+    fi
+    run_community_script "clean-and-update-lxcs" "$COMMUNITY_CLEAN_LXCS_URL" || true
 }
 
 # Lance disk-health.sh (rapport SMART hôte + self-test court optionnel).
@@ -530,9 +593,8 @@ maintenance_menu() {
         read -rp "Choix : " mchoice
         case "$mchoice" in
             1) cleanup_ct || true ;;
-            2) run_community_update_lxcs || true ;;
-            3) run_community_clean_lxcs || true ;;
-            4) run_community_disk_health || true ;;
+            2) run_community_clean_and_update_lxcs || true ;;
+            3) run_community_disk_health || true ;;
             0) return 0 ;;
             *) echo "Choix invalide." ;;
         esac

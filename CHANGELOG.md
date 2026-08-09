@@ -11,7 +11,7 @@ et ce projet respecte [Semantic Versioning](https://semver.org/lang/fr/).
 
 - Prompt bash root dans le CT via `/etc/profile.d/lxc-postconf-prompt.sh`, couleur ANSI dérivée du CTID.
 - Nettoyage d'espace disque local d'un CT (caches, journaux, temp) avec prune Docker/Podman si détecté.
-- Raccourcis community-scripts : `update-lxcs`, `clean-lxcs`, `disk-health` (confirmation + allowlist d'URL).
+- Raccourcis community-scripts : `clean-lxcs` (libellé **Clean and update**), `disk-health` (confirmation + allowlist d'URL).
 - Sous-menu **Maintenance** regroupant nettoyage local + raccourcis community-scripts.
 - Injection SSH : déduplication des lignes déjà présentes dans `authorized_keys` du CT.
 
@@ -20,6 +20,9 @@ et ce projet respecte [Semantic Versioning](https://semver.org/lang/fr/).
 - Menu principal allégé et renuméroté : SSH unique (**3**), réplication+HA (**4**), prompt (**5**), Maintenance (**6**).
 - Options SSH hôte / manuelle fusionnées en une seule entrée avec sous-choix.
 - README : section Mise à jour, documentation du sous-menu Maintenance.
+- Maintenance : `clean-lxcs` renommé **Clean and update** (le script distant nettoie puis fait `apt update`).
+- Clean and update : pré-démarrage des CT arrêtés avant l'appel community-scripts (évite l'abort `container not running`).
+- Message d'erreur community-scripts : distinction code 255 (CT non running) vs annulation whiptail.
 
 ### Deprecated
 
@@ -27,6 +30,7 @@ et ce projet respecte [Semantic Versioning](https://semver.org/lang/fr/).
 
 - Entrées menu séparées « clé SSH hôte » et « clé SSH manuelle » (remplacées par l'option **3** unifiée).
 - Entrées menu plates 7–10 pour la maintenance (déplacées dans le sous-menu **6**).
+- Raccourci menu `update-lxcs` (redondant avec Clean and update).
 
 ### Fixed
 

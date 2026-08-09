@@ -7,7 +7,7 @@ Fonctions principales :
 - renommage, auto-login console, injection de clés SSH (hôte ou saisie)
 - prompt root coloré selon le CTID
 - réplication ZFS + HA (cluster 2 nœuds)
-- sous-menu **Maintenance** : nettoyage local d'un CT, et raccourcis [community-scripts/ProxmoxVE](https://github.com/community-scripts/ProxmoxVE) (`update-lxcs`, `clean-lxcs`, `disk-health`)
+- sous-menu **Maintenance** : nettoyage local d'un CT, et raccourcis [community-scripts/ProxmoxVE](https://github.com/community-scripts/ProxmoxVE) (`clean-lxcs` / clean and update, `disk-health`)
 
 ## Prérequis
 
@@ -63,9 +63,8 @@ Le script affiche un menu en boucle jusqu'à la sortie (`0`). Une annulation au 
 ```text
 === Maintenance ===
 1) Nettoyer un conteneur (espace disque)
-2) Mettre à jour tous les LXC (community-scripts)
-3) Nettoyer tous les LXC (community-scripts)
-4) Santé disques SMART (community-scripts)
+2) Clean and update tous les LXC (community-scripts)
+3) Santé disques SMART (community-scripts)
 0) Retour
 ```
 
@@ -102,18 +101,17 @@ Les options **1**, **2**, **3** et **5** demandent d'abord un **CTID** ; si le c
 | Choix | Fonction | Description |
 |-------|----------|-------------|
 | **1** | Nettoyer un conteneur | Nettoyage **local** d'un CT : caches paquets, journaux, temp ; prune Docker/Podman si détecté (volumes optionnels). Affiche l'usage disque avant/après. |
-| **2** | Update tous les LXC | Confirme puis exécute [`update-lxcs.sh`](https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve/update-lxcs.sh) (UI `whiptail`). |
-| **3** | Clean tous les LXC | Confirme puis exécute [`clean-lxcs.sh`](https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve/clean-lxcs.sh) (multi-CT, UI `whiptail`). |
-| **4** | Santé disques SMART | Confirme puis exécute [`disk-health.sh`](https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve/disk-health.sh) sur l'**hôte** (rapport SMART, self-test court optionnel). |
+| **2** | Clean and update LXC | Pré-démarre les CT arrêtés (sinon le script distant abort sur `container not running`), puis exécute [`clean-lxcs.sh`](https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve/clean-lxcs.sh) : nettoyage multi-CT **puis** `apt update`. |
+| **3** | Santé disques SMART | Confirme puis exécute [`disk-health.sh`](https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve/disk-health.sh) sur l'**hôte** (rapport SMART, self-test court optionnel). |
 | **0** | Retour | Revient au menu principal. |
 
 | Option | Périmètre |
 |--------|-----------|
 | Maintenance **1** | Un seul CT, nettoyage **local** (Docker/Podman inclus) |
-| Maintenance **3** | Multi-CT via community-scripts |
-| Maintenance **4** | Disques physiques de l'**hôte** Proxmox (pas les CT) |
+| Maintenance **2** | Multi-CT via community-scripts (clean + refresh listes apt) |
+| Maintenance **3** | Disques physiques de l'**hôte** Proxmox (pas les CT) |
 
-Les entrées community-scripts (**2**–**4**) délèguent à des scripts **externes** téléchargés à la volée (confirmation + allowlist d'URL).
+Les entrées community-scripts (**2**–**3**) délèguent à des scripts **externes** téléchargés à la volée (confirmation + allowlist d'URL).
 
 ## Contribution
 
