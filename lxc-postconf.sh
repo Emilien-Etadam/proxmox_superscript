@@ -11,8 +11,9 @@
 #   - Proxmox VE 8.x, exécution en root sur l'hôte
 #   - Outils : pct, qm, pvesr, ha-manager (selon les options du menu)
 #   - Option 5 (réplication + HA) : cluster 2 nœuds, ZFS, réplication configurée
-#   - Options 8–9 (community-scripts) : curl, whiptail ; téléchargent et exécutent
+#   - Options 8–10 (community-scripts) : curl, whiptail ; téléchargent et exécutent
 #     du code distant depuis github.com/community-scripts/ProxmoxVE
+#     (disk-health peut aussi installer smartmontools / nvme-cli via apt)
 #
 # Licence: MIT — Copyright (c) Emilien-Etadam
 # SPDX-License-Identifier: MIT
@@ -26,6 +27,7 @@ CTID=""
 readonly COMMUNITY_SCRIPTS_BASE_URL="https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve"
 readonly COMMUNITY_UPDATE_LXCS_URL="${COMMUNITY_SCRIPTS_BASE_URL}/update-lxcs.sh"
 readonly COMMUNITY_CLEAN_LXCS_URL="${COMMUNITY_SCRIPTS_BASE_URL}/clean-lxcs.sh"
+readonly COMMUNITY_DISK_HEALTH_URL="${COMMUNITY_SCRIPTS_BASE_URL}/disk-health.sh"
 
 # Affiche la liste des conteneurs, demande un CTID et démarre le CT si nécessaire.
 #
@@ -66,6 +68,7 @@ show_menu() {
     echo "7) Nettoyer un conteneur (espace disque)"
     echo "8) Mettre à jour tous les LXC (community-scripts)"
     echo "9) Nettoyer tous les LXC (community-scripts)"
+    echo "10) Santé disques SMART (community-scripts)"
     echo "0) Quitter"
     echo ""
 }
@@ -385,6 +388,12 @@ run_community_clean_lxcs() {
     run_community_script "clean-lxcs" "$COMMUNITY_CLEAN_LXCS_URL" || true
 }
 
+# Lance disk-health.sh (rapport SMART hôte + self-test court optionnel).
+# Retour : toujours 0 (le menu principal ne doit pas s'interrompre sous set -e).
+run_community_disk_health() {
+    run_community_script "disk-health" "$COMMUNITY_DISK_HEALTH_URL" || true
+}
+
 # Configure la réplication ZFS (pvesr) et le HA pour tous les CT et VM du cluster.
 #
 # Paramètres : aucun (nœud cible et schedule sur stdin, défauts pve2 et */15).
@@ -487,6 +496,7 @@ while true; do
         7) cleanup_ct ;;
         8) run_community_update_lxcs ;;
         9) run_community_clean_lxcs ;;
+        10) run_community_disk_health ;;
         0) exit 0 ;;
         *) echo "Choix invalide." ;;
     esac
