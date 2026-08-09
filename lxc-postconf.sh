@@ -11,6 +11,9 @@
 #   - Proxmox VE 8.x, exécution en root sur l'hôte
 #   - Outils : pct, qm, pvesr, ha-manager (selon les options du menu)
 #   - Option 5 (réplication + HA) : cluster 2 nœuds, ZFS, réplication configurée
+#   - Options 8–10 (community-scripts) : curl, whiptail ; téléchargent et exécutent
+#     du code distant depuis github.com/community-scripts/ProxmoxVE
+#     (disk-health peut aussi installer smartmontools / nvme-cli via apt)
 #
 # Licence: MIT — Copyright (c) Emilien-Etadam
 # SPDX-License-Identifier: MIT
@@ -19,6 +22,12 @@ set -euo pipefail
 
 # Identifiant du conteneur LXC sélectionné (partagé entre les options du menu).
 CTID=""
+
+# Scripts community-scripts/ProxmoxVE (exécutés sur l'hôte via curl | bash).
+readonly COMMUNITY_SCRIPTS_BASE_URL="https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve"
+readonly COMMUNITY_UPDATE_LXCS_URL="${COMMUNITY_SCRIPTS_BASE_URL}/update-lxcs.sh"
+readonly COMMUNITY_CLEAN_LXCS_URL="${COMMUNITY_SCRIPTS_BASE_URL}/clean-lxcs.sh"
+readonly COMMUNITY_DISK_HEALTH_URL="${COMMUNITY_SCRIPTS_BASE_URL}/disk-health.sh"
 
 # Affiche la liste des conteneurs, demande un CTID et démarre le CT si nécessaire.
 #
@@ -57,6 +66,9 @@ show_menu() {
     echo "5) Réplication + HA (tous les CT/VM)"
     echo "6) Personnaliser le prompt root (couleur selon CTID)"
     echo "7) Nettoyer un conteneur (espace disque)"
+    echo "8) Mettre à jour tous les LXC (community-scripts)"
+    echo "9) Nettoyer tous les LXC (community-scripts)"
+    echo "10) Santé disques SMART (community-scripts)"
     echo "0) Quitter"
     echo ""
 }
@@ -305,6 +317,83 @@ cleanup_ct() {
     echo "[OK] Nettoyage terminé. Espace / avant : $before | après : $after"
 }
 
+# Télécharge et exécute un script community-scripts/ProxmoxVE sur l'hôte.
+#
+# Paramètres : $1 — libellé court ; $2 — URL HTTPS du script raw.
+# Effets de bord : exécute du code distant (curl | bash) ; UI whiptail du script distant.
+# Retour : 0 après exécution ou annulation gérée ; 1 si prérequis / confirmation refusée.
+run_community_script() {
+    local label="$1"
+    local url="$2"
+
+    if [[ -z "$label" || -z "$url" ]]; then
+        echo "ERREUR : libellé ou URL manquant pour le script community."
+        return 1
+    fi
+    if [[ "$url" != https://raw.githubusercontent.com/community-scripts/ProxmoxVE/* ]]; then
+        echo "ERREUR : URL community-scripts non autorisée."
+        return 1
+    fi
+
+    if ! command -v curl >/dev/null 2>&1; then
+        echo "ERREUR : curl est requis pour télécharger $label."
+        return 1
+    fi
+    if ! command -v whiptail >/dev/null 2>&1; then
+        echo "ERREUR : whiptail est requis par $label (paquet debconf-i18n / whiptail)."
+        return 1
+    fi
+
+    echo "[!] $label télécharge et exécute du code distant :"
+    echo "    $url"
+    echo "[!] Vérifiez la source avant de continuer (github.com/community-scripts/ProxmoxVE)."
+    local confirm
+    read -rp "Lancer $label maintenant ? (o/n) : " confirm
+    if [[ "$confirm" != "o" ]]; then
+        echo "[!] Annulé."
+        return 1
+    fi
+
+    echo "[*] Téléchargement et exécution de $label..."
+    # Le script distant a son propre set -e / whiptail ; une annulation ne doit pas tuer le menu.
+    local script_body
+    if ! script_body=$(curl -fsSL --proto '=https' --tlsv1.2 "$url"); then
+        echo "ERREUR : échec du téléchargement de $url"
+        return 1
+    fi
+    if [[ -z "$script_body" ]]; then
+        echo "ERREUR : script distant vide ($url)."
+        return 1
+    fi
+
+    local rc=0
+    bash -c "$script_body" || rc=$?
+    if [[ "$rc" -eq 0 ]]; then
+        echo "[OK] $label terminé."
+    else
+        echo "[!] $label s'est arrêté (code $rc : annulation whiptail ou erreur)."
+    fi
+    return 0
+}
+
+# Lance update-lxcs.sh (mise à jour paquets de tous les LXC, UI whiptail).
+# Retour : toujours 0 (le menu principal ne doit pas s'interrompre sous set -e).
+run_community_update_lxcs() {
+    run_community_script "update-lxcs" "$COMMUNITY_UPDATE_LXCS_URL" || true
+}
+
+# Lance clean-lxcs.sh (nettoyage logs/cache + apt update sur les LXC sélectionnés).
+# Retour : toujours 0 (le menu principal ne doit pas s'interrompre sous set -e).
+run_community_clean_lxcs() {
+    run_community_script "clean-lxcs" "$COMMUNITY_CLEAN_LXCS_URL" || true
+}
+
+# Lance disk-health.sh (rapport SMART hôte + self-test court optionnel).
+# Retour : toujours 0 (le menu principal ne doit pas s'interrompre sous set -e).
+run_community_disk_health() {
+    run_community_script "disk-health" "$COMMUNITY_DISK_HEALTH_URL" || true
+}
+
 # Configure la réplication ZFS (pvesr) et le HA pour tous les CT et VM du cluster.
 #
 # Paramètres : aucun (nœud cible et schedule sur stdin, défauts pve2 et */15).
@@ -405,6 +494,9 @@ while true; do
         5) setup_replication_ha ;;
         6) setup_custom_ps1 ;;
         7) cleanup_ct ;;
+        8) run_community_update_lxcs ;;
+        9) run_community_clean_lxcs ;;
+        10) run_community_disk_health ;;
         0) exit 0 ;;
         *) echo "Choix invalide." ;;
     esac
