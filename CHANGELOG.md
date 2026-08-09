@@ -9,17 +9,28 @@ et ce projet respecte [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Added
 
-- Option menu **6** : prompt bash root dans le CT via `/etc/profile.d/lxc-postconf-prompt.sh`, couleur ANSI dérivée du CTID.
-- Option menu **7** : nettoyage d'espace disque dans un CT (caches paquets, journaux, temp) avec prune Docker/Podman si détecté.
-- Options menu **8** / **9** / **10** : raccourcis vers `update-lxcs.sh`, `clean-lxcs.sh` et `disk-health.sh` (community-scripts/ProxmoxVE), avec confirmation et contrôle d'URL avant exécution distante.
+- Prompt bash root dans le CT via `/etc/profile.d/lxc-postconf-prompt.sh`, couleur ANSI dérivée du CTID.
+- Nettoyage d'espace disque local d'un CT (caches, journaux, temp) avec prune Docker/Podman si détecté.
+- Raccourcis community-scripts : `update-lxcs`, `clean-lxcs`, `disk-health` (confirmation + allowlist d'URL).
+- Sous-menu **Maintenance** regroupant nettoyage local + raccourcis community-scripts.
+- Injection SSH : déduplication des lignes déjà présentes dans `authorized_keys` du CT.
 
 ### Changed
+
+- Menu principal allégé et renuméroté : SSH unique (**3**), réplication+HA (**4**), prompt (**5**), Maintenance (**6**).
+- Options SSH hôte / manuelle fusionnées en une seule entrée avec sous-choix.
+- README : section Mise à jour, documentation du sous-menu Maintenance.
 
 ### Deprecated
 
 ### Removed
 
+- Entrées menu séparées « clé SSH hôte » et « clé SSH manuelle » (remplacées par l'option **3** unifiée).
+- Entrées menu plates 7–10 pour la maintenance (déplacées dans le sous-menu **6**).
+
 ### Fixed
+
+- Une annulation / erreur d'option ne quitte plus le script sous `set -e` (menu principal et Maintenance).
 
 ### Security
 
