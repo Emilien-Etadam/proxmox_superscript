@@ -1,6 +1,14 @@
 # lxc-postconf
 
-Script bash interactif de post-configuration pour conteneurs LXC et machines virtuelles sur **Proxmox VE 8.x**. Exécuté en root sur l'hôte Proxmox, il simplifie les tâches courantes après création d'un CT : renommage, auto-login console, injection de clés SSH, nettoyage d'espace disque (avec ou sans Docker), configuration groupée réplication ZFS + HA sur un cluster à deux nœuds, et raccourcis vers les outils [community-scripts/ProxmoxVE](https://github.com/community-scripts/ProxmoxVE) (`update-lxcs`, `clean-lxcs`, `disk-health`).
+Script bash interactif de post-configuration pour conteneurs LXC et machines virtuelles sur **Proxmox VE 8.x**. Exécuté en **root** sur l'hôte Proxmox.
+
+Fonctions principales :
+
+- renommage, auto-login console, injection de clés SSH
+- prompt root coloré selon le CTID
+- nettoyage d'espace disque d'un CT (avec Docker/Podman si présent)
+- réplication ZFS + HA (cluster 2 nœuds)
+- raccourcis vers [community-scripts/ProxmoxVE](https://github.com/community-scripts/ProxmoxVE) : `update-lxcs`, `clean-lxcs`, `disk-health`
 
 ## Prérequis
 
@@ -14,7 +22,7 @@ Script bash interactif de post-configuration pour conteneurs LXC et machines vir
 
 ## Installation
 
-One-liner depuis ce dépôt (à adapter si le dépôt est renommé ou forké) :
+Sur l'hôte Proxmox (en root) :
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Emilien-Etadam/proxmox_superscript/main/lxc-postconf.sh -o /usr/local/bin/lxc-postconf && chmod +x /usr/local/bin/lxc-postconf
@@ -25,6 +33,16 @@ Puis lancer :
 ```bash
 lxc-postconf
 ```
+
+## Mise à jour
+
+Relancer le même one-liner pour écraser `/usr/local/bin/lxc-postconf` avec la dernière version de `main` :
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Emilien-Etadam/proxmox_superscript/main/lxc-postconf.sh -o /usr/local/bin/lxc-postconf && chmod +x /usr/local/bin/lxc-postconf
+```
+
+Vérifier la présence des options **8**–**10** au menu après mise à jour.
 
 ## Usage
 
@@ -70,12 +88,18 @@ Nouveau nom : app-web-prod
 | **7** | Nettoyer un conteneur | Libère de l'espace disque : caches paquets (`apt`/`apk`/`dnf`/`yum`), journaux (`journalctl` + fichiers rotatés), `/tmp` et `/var/tmp`. Si **Docker** ou **Podman** est présent, prune conteneurs/images/réseaux/build cache (volumes optionnels sur confirmation). Affiche l'usage disque avant/après. |
 | **8** | Update tous les LXC | Confirme puis exécute [`update-lxcs.sh`](https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve/update-lxcs.sh) (UI `whiptail` : exclusions, skip CT arrêtés, `apt`/`apk`/`dnf`/…). |
 | **9** | Clean tous les LXC | Confirme puis exécute [`clean-lxcs.sh`](https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve/clean-lxcs.sh) (UI `whiptail` : logs/cache, `autoremove`, `apt update` sur les CT retenus). |
-| **10** | Santé disques SMART | Confirme puis exécute [`disk-health.sh`](https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve/disk-health.sh) sur l’**hôte** : rapport SMART des disques physiques, self-test court optionnel (`whiptail`). |
+| **10** | Santé disques SMART | Confirme puis exécute [`disk-health.sh`](https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve/disk-health.sh) sur l'**hôte** : rapport SMART des disques physiques, self-test court optionnel (`whiptail`). |
 | **0** | Quitter | Termine le script. |
 
 Les options **1** à **4**, **6** et **7** demandent d'abord un **CTID** ; si le conteneur est arrêté, le script propose de le démarrer.
 
-Les options **8** à **10** délèguent à des scripts **externes** (téléchargés à la volée). L’option **7** reste le nettoyage **local** d’un seul CT (avec support Docker/Podman) ; **9** est le nettoyage multi-CT community-scripts ; **10** cible les disques de l’hôte Proxmox (pas les CT).
+Les options **8** à **10** délèguent à des scripts **externes** (téléchargés à la volée depuis community-scripts). Différences utiles :
+
+| Option | Périmètre |
+|--------|-----------|
+| **7** | Un seul CT, nettoyage **local** (Docker/Podman inclus) |
+| **9** | Multi-CT via community-scripts + UI whiptail |
+| **10** | Disques physiques de l'**hôte** Proxmox (pas les CT) |
 
 ## Contribution
 

@@ -15,6 +15,8 @@ et ce projet respecte [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Changed
 
+- README : section **Mise à jour**, intro clarifiée, tableau de comparaison des options 7 / 9 / 10.
+
 ### Deprecated
 
 ### Removed
