@@ -383,7 +383,9 @@ PATCH_EOF
 
     local prefix="${script_body%%"${marker}"*}"
     local suffix="${script_body#*"${marker}"}"
-    printf '%s' "${prefix}${injection}${marker}${suffix}"
+    # $(...) retire les newlines finales de l'injection : en forcer une avant le marqueur,
+    # sinon "function run_lxc_clean" se retrouve commentée et local $1 explose sous set -u.
+    printf '%s\n%s%s' "${prefix}${injection}" "${marker}" "${suffix}"
 }
 
 # Télécharge et exécute un script community-scripts/ProxmoxVE sur l'hôte.
