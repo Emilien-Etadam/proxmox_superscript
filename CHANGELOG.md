@@ -36,6 +36,7 @@ et ce projet respecte [Semantic Versioning](https://semver.org/lang/fr/).
 
 - Une annulation / erreur d'option ne quitte plus le script sous `set -e` (menu principal et Maintenance).
 - Clean and update : crash `$1: unbound variable` (newline mangée par `$()` collait `function run_lxc_clean` dans un commentaire).
+- Clean and update : patch skip-stopped réécrit (remplacement du bloc `pct start`, exécution via fichier temporaire, rev `skip-stopped-v2`).
 
 ### Security
 
