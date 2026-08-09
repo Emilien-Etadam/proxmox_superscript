@@ -11,8 +11,8 @@
 #   - Proxmox VE 8.x, exécution en root sur l'hôte
 #   - Outils : pct, qm, pvesr, ha-manager (selon les options du menu)
 #   - Option 5 (réplication + HA) : cluster 2 nœuds, ZFS, réplication configurée
-#   - Options 8–10 (community-scripts) : curl, whiptail ; téléchargent et exécutent
-#     du code distant depuis github.com/community-scripts/ProxmoxVE
+#   - Sous-menu Maintenance (community-scripts) : curl, whiptail ; téléchargent
+#     et exécutent du code distant depuis github.com/community-scripts/ProxmoxVE
 #     (disk-health peut aussi installer smartmontools / nvme-cli via apt)
 #
 # Licence: MIT — Copyright (c) Emilien-Etadam
@@ -61,15 +61,26 @@ show_menu() {
     echo "=== Post-config Proxmox ==="
     echo "1) Renommer un conteneur"
     echo "2) Auto-login root sur console tty"
-    echo "3) Injecter une clé SSH (depuis authorized_keys hôte)"
-    echo "4) Injecter une clé SSH (saisie manuelle)"
-    echo "5) Réplication + HA (tous les CT/VM)"
-    echo "6) Personnaliser le prompt root (couleur selon CTID)"
-    echo "7) Nettoyer un conteneur (espace disque)"
-    echo "8) Mettre à jour tous les LXC (community-scripts)"
-    echo "9) Nettoyer tous les LXC (community-scripts)"
-    echo "10) Santé disques SMART (community-scripts)"
+    echo "3) Injecter une clé SSH"
+    echo "4) Réplication + HA (tous les CT/VM)"
+    echo "5) Personnaliser le prompt root (couleur selon CTID)"
+    echo "6) Maintenance..."
     echo "0) Quitter"
+    echo ""
+}
+
+# Affiche le sous-menu Maintenance sur stdout.
+#
+# Paramètres : aucun.
+# Effets de bord : aucun.
+show_maintenance_menu() {
+    echo ""
+    echo "=== Maintenance ==="
+    echo "1) Nettoyer un conteneur (espace disque)"
+    echo "2) Mettre à jour tous les LXC (community-scripts)"
+    echo "3) Nettoyer tous les LXC (community-scripts)"
+    echo "4) Santé disques SMART (community-scripts)"
+    echo "0) Retour"
     echo ""
 }
 
@@ -125,70 +136,96 @@ EOF
     echo "[OK] Auto-login activé."
 }
 
-# Injecte une ou plusieurs clés SSH depuis /root/.ssh/authorized_keys de l'hôte.
+# Ajoute des clés SSH dans /root/.ssh/authorized_keys du CT (déduplication ligne à ligne).
 #
-# Paramètres : aucun (sélection CT et ligne(s) sur stdin).
-# Effets de bord : ajoute des entrées dans /root/.ssh/authorized_keys du conteneur.
-# Retour : 0 si succès, 1 si fichier hôte absent ou sélection vide.
-inject_ssh_from_host() {
-    select_ct || return 1
-    local host_keys="/root/.ssh/authorized_keys"
-    if [[ ! -f "$host_keys" ]]; then
-        echo "ERREUR : $host_keys absent sur l'hôte."
-        return 1
-    fi
-
-    echo "Clés disponibles sur l'hôte :"
-    nl -ba "$host_keys"
-    echo ""
-    local selection
-    read -rp "Numéro de la ligne à injecter (ou 'all') : " selection
-
-    local keys
-    if [[ "$selection" == "all" ]]; then
-        keys=$(cat "$host_keys")
-    else
-        keys=$(sed -n "${selection}p" "$host_keys")
-    fi
-
+# Paramètres : $1 — bloc de clés publiques (une ou plusieurs lignes).
+# Effets de bord : crée ~/.ssh si besoin ; n'ajoute que les lignes absentes.
+# Retour : 0 si au moins une clé ajoutée ou déjà présente, 1 si bloc vide.
+append_ssh_keys_to_ct() {
+    local keys="$1"
     if [[ -z "$keys" ]]; then
-        echo "ERREUR : sélection vide."
-        return 1
-    fi
-
-    pct exec "$CTID" -- env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root bash -c "
-        mkdir -p /root/.ssh
-        chmod 700 /root/.ssh
-        cat >> /root/.ssh/authorized_keys <<'SSHEOF'
-$keys
-SSHEOF
-        chmod 600 /root/.ssh/authorized_keys
-    "
-    echo "[OK] Clé(s) injectée(s)."
-}
-
-# Injecte une clé SSH publique saisie manuellement dans le conteneur.
-#
-# Paramètres : aucun (sélection CT via select_ct, clé sur stdin).
-# Effets de bord : ajoute une entrée dans /root/.ssh/authorized_keys du conteneur.
-# Retour : 0 si succès, 1 si clé vide.
-inject_ssh_manual() {
-    select_ct || return 1
-    local pubkey
-    read -rp "Coller la clé publique SSH : " pubkey
-    if [[ -z "$pubkey" ]]; then
         echo "ERREUR : clé vide."
         return 1
     fi
+
     pct exec "$CTID" -- env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root bash -c "
         mkdir -p /root/.ssh
         chmod 700 /root/.ssh
-        cat >> /root/.ssh/authorized_keys <<'SSHEOF'
-$pubkey
-SSHEOF
+        touch /root/.ssh/authorized_keys
         chmod 600 /root/.ssh/authorized_keys
+        added=0
+        skipped=0
+        while IFS= read -r line || [ -n \"\$line\" ]; do
+            [ -z \"\$line\" ] && continue
+            case \"\$line\" in
+                \#*) continue ;;
+            esac
+            if grep -qxF \"\$line\" /root/.ssh/authorized_keys 2>/dev/null; then
+                skipped=\$((skipped + 1))
+            else
+                printf '%s\n' \"\$line\" >> /root/.ssh/authorized_keys
+                added=\$((added + 1))
+            fi
+        done <<'SSHEOF'
+$keys
+SSHEOF
+        echo \"[OK] Clé(s) : \$added ajoutée(s), \$skipped déjà présente(s).\"
     "
-    echo "[OK] Clé injectée."
+}
+
+# Injecte une clé SSH dans le CT : depuis l'hôte ou saisie manuelle.
+#
+# Paramètres : aucun (sélection CT + source sur stdin).
+# Effets de bord : modifie /root/.ssh/authorized_keys du conteneur.
+# Retour : 0 si succès, 1 si annulation / erreur.
+inject_ssh() {
+    select_ct || return 1
+
+    echo "Source de la clé :"
+    echo "1) Depuis authorized_keys hôte"
+    echo "2) Saisie manuelle"
+    echo "0) Annuler"
+    local source
+    read -rp "Choix : " source
+
+    case "$source" in
+        1)
+            local host_keys="/root/.ssh/authorized_keys"
+            if [[ ! -f "$host_keys" ]]; then
+                echo "ERREUR : $host_keys absent sur l'hôte."
+                return 1
+            fi
+            echo "Clés disponibles sur l'hôte :"
+            nl -ba "$host_keys"
+            echo ""
+            local selection
+            read -rp "Numéro de la ligne à injecter (ou 'all') : " selection
+            local keys
+            if [[ "$selection" == "all" ]]; then
+                keys=$(cat "$host_keys")
+            else
+                if [[ ! "$selection" =~ ^[0-9]+$ ]]; then
+                    echo "ERREUR : numéro de ligne invalide."
+                    return 1
+                fi
+                keys=$(sed -n "${selection}p" "$host_keys")
+            fi
+            append_ssh_keys_to_ct "$keys"
+            ;;
+        2)
+            local pubkey
+            read -rp "Coller la clé publique SSH : " pubkey
+            append_ssh_keys_to_ct "$pubkey"
+            ;;
+        0)
+            echo "[!] Annulé."
+            return 1
+            ;;
+        *)
+            echo "Choix invalide."
+            return 1
+            ;;
+    esac
 }
 
 # Installe un PS1 bash root dont la couleur ANSI dépend du CTID (stable par conteneur).
@@ -481,22 +518,40 @@ setup_replication_ha() {
     echo "[OK] Réplication + HA terminé."
 }
 
+# Boucle du sous-menu Maintenance (retour = 0).
+#
+# Paramètres : aucun.
+# Effets de bord : appelle cleanup_ct / community-scripts selon le choix.
+# Les échecs / annulations ne quittent pas le sous-menu (set -e).
+maintenance_menu() {
+    while true; do
+        show_maintenance_menu
+        local mchoice=""
+        read -rp "Choix : " mchoice
+        case "$mchoice" in
+            1) cleanup_ct || true ;;
+            2) run_community_update_lxcs || true ;;
+            3) run_community_clean_lxcs || true ;;
+            4) run_community_disk_health || true ;;
+            0) return 0 ;;
+            *) echo "Choix invalide." ;;
+        esac
+    done
+}
+
 # --- Boucle principale ---
+# || true : une annulation (return 1) ne doit pas tuer le menu sous set -e.
 while true; do
     show_menu
     choice=""
     read -rp "Choix : " choice
     case "$choice" in
-        1) rename_ct ;;
-        2) setup_autologin ;;
-        3) inject_ssh_from_host ;;
-        4) inject_ssh_manual ;;
-        5) setup_replication_ha ;;
-        6) setup_custom_ps1 ;;
-        7) cleanup_ct ;;
-        8) run_community_update_lxcs ;;
-        9) run_community_clean_lxcs ;;
-        10) run_community_disk_health ;;
+        1) rename_ct || true ;;
+        2) setup_autologin || true ;;
+        3) inject_ssh || true ;;
+        4) setup_replication_ha || true ;;
+        5) setup_custom_ps1 || true ;;
+        6) maintenance_menu || true ;;
         0) exit 0 ;;
         *) echo "Choix invalide." ;;
     esac
