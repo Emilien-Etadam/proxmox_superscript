@@ -25,7 +25,6 @@ CTID=""
 
 # Scripts community-scripts/ProxmoxVE (exécutés sur l'hôte via curl | bash).
 readonly COMMUNITY_SCRIPTS_BASE_URL="https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve"
-readonly COMMUNITY_UPDATE_LXCS_URL="${COMMUNITY_SCRIPTS_BASE_URL}/update-lxcs.sh"
 readonly COMMUNITY_CLEAN_LXCS_URL="${COMMUNITY_SCRIPTS_BASE_URL}/clean-lxcs.sh"
 readonly COMMUNITY_DISK_HEALTH_URL="${COMMUNITY_SCRIPTS_BASE_URL}/disk-health.sh"
 
@@ -77,9 +76,8 @@ show_maintenance_menu() {
     echo ""
     echo "=== Maintenance ==="
     echo "1) Nettoyer un conteneur (espace disque)"
-    echo "2) Mettre à jour tous les LXC (community-scripts)"
-    echo "3) Nettoyer tous les LXC (community-scripts)"
-    echo "4) Santé disques SMART (community-scripts)"
+    echo "2) Clean and update tous les LXC (community-scripts)"
+    echo "3) Santé disques SMART (community-scripts)"
     echo "0) Retour"
     echo ""
 }
@@ -413,16 +411,10 @@ run_community_script() {
     return 0
 }
 
-# Lance update-lxcs.sh (mise à jour paquets de tous les LXC, UI whiptail).
+# Lance clean-lxcs.sh (nettoyage + apt update sur les LXC sélectionnés).
 # Retour : toujours 0 (le menu principal ne doit pas s'interrompre sous set -e).
-run_community_update_lxcs() {
-    run_community_script "update-lxcs" "$COMMUNITY_UPDATE_LXCS_URL" || true
-}
-
-# Lance clean-lxcs.sh (nettoyage logs/cache + apt update sur les LXC sélectionnés).
-# Retour : toujours 0 (le menu principal ne doit pas s'interrompre sous set -e).
-run_community_clean_lxcs() {
-    run_community_script "clean-lxcs" "$COMMUNITY_CLEAN_LXCS_URL" || true
+run_community_clean_and_update_lxcs() {
+    run_community_script "clean-and-update-lxcs" "$COMMUNITY_CLEAN_LXCS_URL" || true
 }
 
 # Lance disk-health.sh (rapport SMART hôte + self-test court optionnel).
@@ -530,9 +522,8 @@ maintenance_menu() {
         read -rp "Choix : " mchoice
         case "$mchoice" in
             1) cleanup_ct || true ;;
-            2) run_community_update_lxcs || true ;;
-            3) run_community_clean_lxcs || true ;;
-            4) run_community_disk_health || true ;;
+            2) run_community_clean_and_update_lxcs || true ;;
+            3) run_community_disk_health || true ;;
             0) return 0 ;;
             *) echo "Choix invalide." ;;
         esac
