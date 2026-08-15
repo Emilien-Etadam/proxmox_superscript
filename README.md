@@ -94,7 +94,7 @@ Nouveau nom : app-web-prod
 | **6** | Maintenance… | Ouvre le sous-menu Maintenance. |
 | **0** | Quitter | Termine le script. |
 
-Les options **1**, **2**, **3** et **5** demandent d'abord un **CTID** ; si le conteneur est arrêté, le script propose de le démarrer.
+Les options **1**, **2**, **3** et **5** demandent d'abord un **CTID** ; si le conteneur est arrêté, le script propose de le démarrer. La liste affichée vient des configs du nœud (`/etc/pve/local/lxc/`), pas de `pct list` : un CT dont le socket LXC est cassé n'empêche plus d'afficher les autres.
 
 ### Options Maintenance
 
