@@ -17,7 +17,7 @@
 #
 # Licence: MIT — Copyright (c) Emilien-Etadam
 # SPDX-License-Identifier: MIT
-# lxc-postconf-revision: 2026-08-09-skip-stopped-v2
+# lxc-postconf-revision: 2026-08-15-list-from-conf
 
 set -euo pipefail
 
@@ -29,6 +29,102 @@ readonly COMMUNITY_SCRIPTS_BASE_URL="https://raw.githubusercontent.com/community
 readonly COMMUNITY_CLEAN_LXCS_URL="${COMMUNITY_SCRIPTS_BASE_URL}/clean-lxcs.sh"
 readonly COMMUNITY_DISK_HEALTH_URL="${COMMUNITY_SCRIPTS_BASE_URL}/disk-health.sh"
 
+# Répertoire des configs LXC du nœud local (pmxcfs).
+#
+# Paramètres : aucun.
+# Retour : 0 et chemin sur stdout ; 1 si pmxcfs / nœud local introuvable.
+local_lxc_conf_dir() {
+    if [[ -d /etc/pve/local ]]; then
+        printf '%s\n' /etc/pve/local/lxc
+        return 0
+    fi
+    local node
+    node=$(hostname -s 2>/dev/null || hostname)
+    if [[ -n "$node" && -d "/etc/pve/nodes/${node}/lxc" ]]; then
+        printf '%s\n' "/etc/pve/nodes/${node}/lxc"
+        return 0
+    fi
+    return 1
+}
+
+# Liste les CTID numériques du nœud local (configs .conf, pas pct list).
+#
+# Paramètres : $1 — (optionnel) répertoire de configs ; sinon local_lxc_conf_dir.
+# Retour : 0 (même si liste vide) ; 1 si le répertoire de configs est introuvable.
+# Stdout : un CTID par ligne, trié numériquement.
+list_local_ct_ids() {
+    local confdir="${1:-}"
+    if [[ -z "$confdir" ]]; then
+        confdir=$(local_lxc_conf_dir) || return 1
+    fi
+    [[ -d "$confdir" ]] || return 0
+
+    local f ctid
+    local -a ids=()
+    for f in "$confdir"/*.conf; do
+        [[ -f "$f" ]] || continue
+        ctid="${f##*/}"
+        ctid="${ctid%.conf}"
+        [[ "$ctid" =~ ^[0-9]+$ ]] || continue
+        ids+=("$ctid")
+    done
+    if [[ "${#ids[@]}" -eq 0 ]]; then
+        return 0
+    fi
+    printf '%s\n' "${ids[@]}" | sort -n
+}
+
+# Statut d'un CT sans passer par pct list / vmstatus (évite le socket LXC de listing).
+#
+# Paramètres : $1 — CTID.
+# Retour : toujours 0. Stdout : running | stopped | inconnu.
+ct_status_safe() {
+    local ctid="$1"
+    local raw=""
+    raw=$(pct status "$ctid" 2>/dev/null) || true
+    local s=""
+    s=$(awk '{print $2}' <<<"$raw")
+    if [[ "$s" == "running" || "$s" == "stopped" ]]; then
+        printf '%s\n' "$s"
+    else
+        printf '%s\n' "inconnu"
+    fi
+}
+
+# Affiche une table VMID / Status / Lock / Name depuis les configs locales.
+#
+# Paramètres : $1 — (optionnel) répertoire de configs ; sinon local_lxc_conf_dir.
+# Retour : 0 si au moins un CT ; 1 sinon (configs absentes ou liste vide).
+print_local_ct_table() {
+    local confdir="${1:-}"
+    if [[ -z "$confdir" ]]; then
+        if ! confdir=$(local_lxc_conf_dir); then
+            echo "ERREUR : configs LXC introuvables (/etc/pve/local). pmxcfs est-il monté ?"
+            return 1
+        fi
+    fi
+    if [[ ! -d "$confdir" ]]; then
+        echo "(aucun conteneur sur ce nœud)"
+        return 1
+    fi
+
+    local -a ids=()
+    mapfile -t ids < <(list_local_ct_ids "$confdir")
+    if [[ "${#ids[@]}" -eq 0 ]]; then
+        echo "(aucun conteneur sur ce nœud)"
+        return 1
+    fi
+
+    local ctid name lock status
+    printf '%-10s %-12s %-12s %s\n' "VMID" "Status" "Lock" "Name"
+    for ctid in "${ids[@]}"; do
+        name=$(awk -F': *' '/^hostname:/{print $2; exit}' "$confdir/${ctid}.conf" 2>/dev/null || true)
+        lock=$(awk -F': *' '/^lock:/{print $2; exit}' "$confdir/${ctid}.conf" 2>/dev/null || true)
+        status=$(ct_status_safe "$ctid")
+        printf '%-10s %-12s %-12s %s\n' "$ctid" "$status" "${lock:-}" "${name:-CT${ctid}}"
+    done
+}
+
 # Affiche la liste des conteneurs, demande un CTID et démarre le CT si nécessaire.
 #
 # Paramètres : aucun (lit CTID sur stdin).
@@ -36,19 +132,37 @@ readonly COMMUNITY_DISK_HEALTH_URL="${COMMUNITY_SCRIPTS_BASE_URL}/disk-health.sh
 # Retour : 0 si le conteneur est utilisable, 1 sinon.
 select_ct() {
     echo "Conteneurs disponibles :"
-    pct list
+    print_local_ct_table || return 1
     echo ""
     read -rp "CTID du conteneur : " CTID
 
-    local status
-    status=$(pct status "$CTID" 2>/dev/null | awk '{print $2}') || {
-        echo "ERREUR : conteneur $CTID introuvable."
+    if [[ ! "$CTID" =~ ^[0-9]+$ ]]; then
+        echo "ERREUR : CTID invalide."
         return 1
-    }
-    if [[ "$status" != "running" ]]; then
+    fi
+
+    local confdir
+    if ! confdir=$(local_lxc_conf_dir) || [[ ! -f "$confdir/${CTID}.conf" ]]; then
+        echo "ERREUR : conteneur $CTID introuvable sur ce nœud."
+        return 1
+    fi
+
+    local status
+    status=$(ct_status_safe "$CTID")
+    if [[ "$status" == "stopped" ]]; then
         local start
         read -rp "Le conteneur $CTID est arrêté. Démarrer ? (o/n) : " start
-        [[ "$start" == "o" ]] && pct start "$CTID" && sleep 3 || return 1
+        if [[ "$start" != "o" ]]; then
+            echo "[!] Annulé."
+            return 1
+        fi
+        if ! pct start "$CTID"; then
+            echo "ERREUR : impossible de démarrer le conteneur $CTID."
+            return 1
+        fi
+        sleep 3
+    elif [[ "$status" != "running" ]]; then
+        echo "[!] Statut de $CTID indéterminé. Un socket LXC cassé peut bloquer pct exec."
     fi
 }
 
@@ -590,8 +704,13 @@ setup_replication_ha() {
     }
 
     local vmid
-    local ct_ids
-    mapfile -t ct_ids < <(pct list | awk 'NR>1 {print $1}')
+    local ct_ids=()
+    local lxc_confdir=""
+    if lxc_confdir=$(local_lxc_conf_dir); then
+        mapfile -t ct_ids < <(list_local_ct_ids "$lxc_confdir")
+    else
+        echo "[!] Configs LXC locales introuvables : réplication/HA des CT ignorée."
+    fi
     for vmid in "${ct_ids[@]}"; do
         process_id "$vmid" "ct"
     done
@@ -629,18 +748,21 @@ maintenance_menu() {
 
 # --- Boucle principale ---
 # || true : une annulation (return 1) ne doit pas tuer le menu sous set -e.
-while true; do
-    show_menu
-    choice=""
-    read -rp "Choix : " choice
-    case "$choice" in
-        1) rename_ct || true ;;
-        2) setup_autologin || true ;;
-        3) inject_ssh || true ;;
-        4) setup_replication_ha || true ;;
-        5) setup_custom_ps1 || true ;;
-        6) maintenance_menu || true ;;
-        0) exit 0 ;;
-        *) echo "Choix invalide." ;;
-    esac
-done
+# LXC_POSTCONF_SOURCE_ONLY=1 : charger les fonctions sans lancer le menu (tests).
+if [[ "${LXC_POSTCONF_SOURCE_ONLY:-0}" != "1" ]]; then
+    while true; do
+        show_menu
+        choice=""
+        read -rp "Choix : " choice
+        case "$choice" in
+            1) rename_ct || true ;;
+            2) setup_autologin || true ;;
+            3) inject_ssh || true ;;
+            4) setup_replication_ha || true ;;
+            5) setup_custom_ps1 || true ;;
+            6) maintenance_menu || true ;;
+            0) exit 0 ;;
+            *) echo "Choix invalide." ;;
+        esac
+    done
+fi

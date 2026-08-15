@@ -34,6 +34,7 @@ et ce projet respecte [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Fixed
 
+- Liste des CT : ne plus appeler `pct list` (vmstatus / socket LXC). Un CT au socket cassé produisait `Use of uninitialized value in subtraction` (`PVE/LXC.pm:339`) et `failed to read from command socket: Connection reset by peer`, puis une table vide. Lecture des configs `/etc/pve/local/lxc/*.conf` et statut via `pct status`.
 - Une annulation / erreur d'option ne quitte plus le script sous `set -e` (menu principal et Maintenance).
 - Clean and update : crash `$1: unbound variable` (newline mangée par `$()` collait `function run_lxc_clean` dans un commentaire).
 - Clean and update : patch skip-stopped réécrit (remplacement du bloc `pct start`, exécution via fichier temporaire, rev `skip-stopped-v2`).
