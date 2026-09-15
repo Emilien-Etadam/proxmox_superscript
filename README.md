@@ -7,7 +7,7 @@ Fonctions principales :
 - renommage, auto-login console, injection de clés SSH (hôte ou saisie)
 - prompt root coloré selon le CTID
 - réplication ZFS + HA (cluster 2 nœuds)
-- sous-menu **Maintenance** : nettoyage local d'un CT, et raccourcis [community-scripts/ProxmoxVE](https://github.com/community-scripts/ProxmoxVE) (`clean-lxcs` / clean and update, `disk-health`)
+- sous-menu **Maintenance** : nettoyage local d'un CT, activation d'`unattended-upgrades` sur les LXC running, et raccourcis [community-scripts/ProxmoxVE](https://github.com/community-scripts/ProxmoxVE) (`clean-lxcs` / clean and update, `disk-health`)
 
 ## Prérequis
 
@@ -65,6 +65,7 @@ Le script affiche un menu en boucle jusqu'à la sortie (`0`). Une annulation au 
 1) Nettoyer un conteneur (espace disque)
 2) Clean and update tous les LXC (community-scripts)
 3) Santé disques SMART (community-scripts)
+4) Activer unattended-upgrades (LXC running)
 0) Retour
 ```
 
@@ -103,6 +104,7 @@ Les options **1**, **2**, **3** et **5** demandent d'abord un **CTID** ; si le c
 | **1** | Nettoyer un conteneur | Nettoyage **local** d'un CT : caches paquets, journaux, temp ; prune Docker/Podman si détecté (volumes optionnels). Affiche l'usage disque avant/après. |
 | **2** | Clean and update LXC | Exécute [`clean-lxcs.sh`](https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve/clean-lxcs.sh) après un patch lxc-postconf (rev **skip-stopped-v2**) : les CT **non running sont ignorés** (pas de `pct start`). Nettoyage multi-CT puis `apt update`. |
 | **3** | Santé disques SMART | Confirme puis exécute [`disk-health.sh`](https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve/disk-health.sh) sur l'**hôte** (rapport SMART, self-test court optionnel). |
+| **4** | unattended-upgrades | Installe et active `unattended-upgrades` sur **tous les LXC running** du nœud (Debian/Ubuntu). Les CT arrêtés et les guests sans `apt` sont ignorés. |
 | **0** | Retour | Revient au menu principal. |
 
 | Option | Périmètre |
@@ -110,6 +112,7 @@ Les options **1**, **2**, **3** et **5** demandent d'abord un **CTID** ; si le c
 | Maintenance **1** | Un seul CT, nettoyage **local** (Docker/Podman inclus) |
 | Maintenance **2** | Multi-CT via community-scripts (clean + refresh listes apt) |
 | Maintenance **3** | Disques physiques de l'**hôte** Proxmox (pas les CT) |
+| Maintenance **4** | Tous les LXC **running** du nœud (Debian/Ubuntu) |
 
 Les entrées community-scripts (**2**–**3**) délèguent à des scripts **externes** téléchargés à la volée (confirmation + allowlist d'URL).
 

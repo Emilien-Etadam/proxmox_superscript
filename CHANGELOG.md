@@ -14,6 +14,7 @@ et ce projet respecte [Semantic Versioning](https://semver.org/lang/fr/).
 - Raccourcis community-scripts : `clean-lxcs` (libellé **Clean and update**), `disk-health` (confirmation + allowlist d'URL).
 - Sous-menu **Maintenance** regroupant nettoyage local + raccourcis community-scripts.
 - Injection SSH : déduplication des lignes déjà présentes dans `authorized_keys` du CT.
+- Maintenance **4** : installe et active `unattended-upgrades` sur tous les LXC running (Debian/Ubuntu).
 
 ### Changed
 

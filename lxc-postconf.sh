@@ -17,7 +17,7 @@
 #
 # Licence: MIT — Copyright (c) Emilien-Etadam
 # SPDX-License-Identifier: MIT
-# lxc-postconf-revision: 2026-08-15-list-from-conf
+# lxc-postconf-revision: 2026-09-15-unattended-upgrades
 
 set -euo pipefail
 
@@ -173,7 +173,7 @@ select_ct() {
 show_menu() {
     echo ""
     echo "=== Post-config Proxmox ==="
-    echo "(rev skip-stopped-v2)"
+    echo "(rev unattended-upgrades)"
     echo "1) Renommer un conteneur"
     echo "2) Auto-login root sur console tty"
     echo "3) Injecter une clé SSH"
@@ -194,6 +194,7 @@ show_maintenance_menu() {
     echo "1) Nettoyer un conteneur (espace disque)"
     echo "2) Clean and update tous les LXC (community-scripts)"
     echo "3) Santé disques SMART (community-scripts)"
+    echo "4) Activer unattended-upgrades (LXC running)"
     echo "0) Retour"
     echo ""
 }
@@ -634,6 +635,103 @@ run_community_disk_health() {
     run_community_script "disk-health" "$COMMUNITY_DISK_HEALTH_URL" || true
 }
 
+# Installe et active unattended-upgrades dans un CT Debian/Ubuntu.
+#
+# Paramètres : $1 — CTID running.
+# Retour : 0 si OK, 2 si pas d'apt (CT ignoré), autre si échec pct/apt.
+enable_unattended_upgrades_in_ct() {
+    local ctid="$1"
+    pct exec "$ctid" -- env -i \
+        PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+        HOME=/root \
+        TERM=xterm \
+        DEBIAN_FRONTEND=noninteractive \
+        bash -c '
+            if ! command -v apt-get >/dev/null 2>&1; then
+                echo "[!] apt introuvable : ignoré (guest non Debian/Ubuntu)."
+                exit 2
+            fi
+            apt-get update -qq && apt-get install -y unattended-upgrades && \
+            echo "unattended-upgrades unattended-upgrades/enable_auto_updates boolean true" | debconf-set-selections && \
+            dpkg-reconfigure -f noninteractive unattended-upgrades
+        '
+}
+
+# Installe et active unattended-upgrades sur tous les LXC running du nœud.
+#
+# Paramètres : aucun (confirmation stdin).
+# Effets de bord : apt update/install + dpkg-reconfigure dans chaque CT running (Debian/Ubuntu).
+# Les CT Alpine/CentOS (sans apt) et les échecs individuels n'interrompent pas la boucle.
+# Retour : 0 après traitement, 1 si aucun CT running, configs absentes ou annulation.
+enable_unattended_upgrades_running_cts() {
+    local confdir
+    if ! confdir=$(local_lxc_conf_dir); then
+        echo "ERREUR : configs LXC introuvables (/etc/pve/local). pmxcfs est-il monté ?"
+        return 1
+    fi
+
+    local -a ids=()
+    mapfile -t ids < <(list_local_ct_ids "$confdir")
+    if [[ "${#ids[@]}" -eq 0 ]]; then
+        echo "(aucun conteneur sur ce nœud)"
+        return 1
+    fi
+
+    local -a running=()
+    local ctid status name
+    for ctid in "${ids[@]}"; do
+        status=$(ct_status_safe "$ctid")
+        if [[ "$status" == "running" ]]; then
+            running+=("$ctid")
+        fi
+    done
+
+    if [[ "${#running[@]}" -eq 0 ]]; then
+        echo "[!] Aucun conteneur running sur ce nœud."
+        return 1
+    fi
+
+    echo "Conteneurs running :"
+    printf '%-10s %s\n' "VMID" "Name"
+    for ctid in "${running[@]}"; do
+        name=$(awk -F': *' '/^hostname:/{print $2; exit}' "$confdir/${ctid}.conf" 2>/dev/null || true)
+        printf '%-10s %s\n' "$ctid" "${name:-CT${ctid}}"
+    done
+    echo ""
+    local confirm
+    read -rp "Installer et activer unattended-upgrades sur ces CT ? (o/n) : " confirm
+    if [[ "$confirm" != "o" ]]; then
+        echo "[!] Annulé."
+        return 1
+    fi
+
+    local ok=0 skip=0 fail=0 rc
+    for ctid in "${running[@]}"; do
+        echo "=== LXC $ctid ==="
+        rc=0
+        enable_unattended_upgrades_in_ct "$ctid" || rc=$?
+        case "$rc" in
+            0)
+                echo "[OK] unattended-upgrades activé sur $ctid."
+                ok=$((ok + 1))
+                ;;
+            2)
+                skip=$((skip + 1))
+                ;;
+            *)
+                echo "[!] Échec sur $ctid (code $rc)."
+                fail=$((fail + 1))
+                ;;
+        esac
+    done
+
+    echo "[*] Bilan unattended-upgrades : $ok OK, $skip ignoré(s), $fail échec(s)."
+    if [[ "$fail" -gt 0 && "$ok" -eq 0 ]]; then
+        return 1
+    fi
+    return 0
+}
+
 # Configure la réplication ZFS (pvesr) et le HA pour tous les CT et VM du cluster.
 #
 # Paramètres : aucun (nœud cible et schedule sur stdin, défauts pve2 et */15).
@@ -740,6 +838,7 @@ maintenance_menu() {
             1) cleanup_ct || true ;;
             2) run_community_clean_and_update_lxcs || true ;;
             3) run_community_disk_health || true ;;
+            4) enable_unattended_upgrades_running_cts || true ;;
             0) return 0 ;;
             *) echo "Choix invalide." ;;
         esac
