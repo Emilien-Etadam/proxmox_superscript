@@ -43,7 +43,7 @@ curl -fsSL https://raw.githubusercontent.com/Emilien-Etadam/proxmox_superscript/
 
 ## Usage
 
-Le script affiche un menu en boucle jusqu'à la sortie (`0`). Une annulation au milieu d'une option ramène au menu (ne quitte pas le script).
+Le script affiche un menu en boucle jusqu'à la sortie (`0`). Une annulation au milieu d'une option ramène au menu (ne quitte pas le script). Les menus (principal, Maintenance, source de la clé SSH) ont un titre, les actions groupées, puis la sortie séparée. Sur un terminal, le titre est en gras et la touche en cyan ; ces couleurs sont absentes si `NO_COLOR` est défini, si `TERM` vaut `dumb`, ou si la sortie n'est pas un terminal.
 
 ### Menu principal
 
@@ -70,6 +70,19 @@ Maintenance
   3  Santé disques SMART (community-scripts)
 
   0  Retour
+```
+
+### Source de la clé SSH
+
+Option **3**, une fois le CTID choisi :
+
+```text
+Source de la clé
+
+  1  Depuis authorized_keys hôte
+  2  Saisie manuelle
+
+  0  Annuler
 ```
 
 ### Exemple de session (option 1 — renommage)
@@ -101,7 +114,7 @@ Nouveau nom : app-web-prod
 | **6** | Maintenance… | Ouvre le sous-menu Maintenance. |
 | **0** | Quitter | Termine le script. |
 
-Les options **1**, **2**, **3** et **5**, ainsi que Maintenance **1**, demandent le **CTID** affiché dans Proxmox (pas de tableau de tous les conteneurs). Si le conteneur est arrêté, le script propose de le démarrer. L'existence du CT est vérifiée via les configs du nœud (`/etc/pve/local/lxc/`), pas via `pct list` : un socket LXC cassé n'empêche pas de cibler un autre CT.
+Les options **1**, **2**, **3** et **5**, ainsi que Maintenance **1**, demandent le **CTID** affiché dans Proxmox (chiffres seulement, pas de tableau de tous les conteneurs). Si le conteneur est arrêté, le script propose de le démarrer. L'existence du CT est vérifiée via les configs du nœud (`/etc/pve/local/lxc/`), pas via `pct list` : un socket LXC cassé n'empêche pas de cibler un autre CT.
 
 ### Options Maintenance
 
