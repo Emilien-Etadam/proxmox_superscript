@@ -48,35 +48,42 @@ Le script affiche un menu en boucle jusqu'à la sortie (`0`). Une annulation au 
 ### Menu principal
 
 ```text
-=== Post-config Proxmox ===
-1) Renommer un conteneur
-2) Auto-login root sur console tty
-3) Injecter une clé SSH
-4) Réplication + HA (tous les CT/VM)
-5) Personnaliser le prompt root (couleur selon CTID)
-6) Maintenance...
-0) Quitter
+Post-config Proxmox
+
+  1  Renommer un conteneur
+  2  Auto-login root sur console tty
+  3  Injecter une clé SSH
+  4  Réplication + HA (tous les CT/VM)
+  5  Personnaliser le prompt root (couleur selon CTID)
+  6  Maintenance...
+
+  0  Quitter
 ```
 
 ### Sous-menu Maintenance
 
 ```text
-=== Maintenance ===
-1) Nettoyer un conteneur (espace disque)
-2) Clean and update tous les LXC (community-scripts)
-3) Santé disques SMART (community-scripts)
-0) Retour
+Maintenance
+
+  1  Nettoyer un conteneur (espace disque)
+  2  Clean and update tous les LXC (community-scripts)
+  3  Santé disques SMART (community-scripts)
+
+  0  Retour
 ```
 
 ### Exemple de session (option 1 — renommage)
 
-```text
-Choix : 1
-Conteneurs disponibles :
-VMID       Status     Lock         Name
-100        running                 app-web
+Le CTID est celui déjà affiché dans l'interface Proxmox. Le script ne reliste pas les conteneurs.
 
-CTID du conteneur : 100
+```text
+  Choix : 1
+
+Conteneur
+
+  Saisissez le CTID affiché dans Proxmox.
+
+  CTID : 100
 Nom actuel : app-web
 Nouveau nom : app-web-prod
 [OK] Conteneur renommé : app-web-prod
@@ -94,7 +101,7 @@ Nouveau nom : app-web-prod
 | **6** | Maintenance… | Ouvre le sous-menu Maintenance. |
 | **0** | Quitter | Termine le script. |
 
-Les options **1**, **2**, **3** et **5** demandent d'abord un **CTID** ; si le conteneur est arrêté, le script propose de le démarrer. La liste affichée vient des configs du nœud (`/etc/pve/local/lxc/`), pas de `pct list` : un CT dont le socket LXC est cassé n'empêche plus d'afficher les autres.
+Les options **1**, **2**, **3** et **5**, ainsi que Maintenance **1**, demandent le **CTID** affiché dans Proxmox (pas de tableau de tous les conteneurs). Si le conteneur est arrêté, le script propose de le démarrer. L'existence du CT est vérifiée via les configs du nœud (`/etc/pve/local/lxc/`), pas via `pct list` : un socket LXC cassé n'empêche pas de cibler un autre CT.
 
 ### Options Maintenance
 
