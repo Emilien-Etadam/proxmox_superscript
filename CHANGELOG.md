@@ -17,6 +17,8 @@ et ce projet respecte [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Changed
 
+- Sélection d'un conteneur : saisie du CTID affiché dans Proxmox, sans tableau de tous les conteneurs.
+- Menus : titre, actions puis sortie séparée, espacements plus larges ; couleurs sobres sur terminal (`NO_COLOR` ou sortie non interactive : texte seul).
 - Menu principal allégé et renuméroté : SSH unique (**3**), réplication+HA (**4**), prompt (**5**), Maintenance (**6**).
 - Options SSH hôte / manuelle fusionnées en une seule entrée avec sous-choix.
 - README : section Mise à jour, documentation du sous-menu Maintenance.
@@ -28,6 +30,8 @@ et ce projet respecte [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Removed
 
+- Étape « Conteneurs disponibles » (tableau VMID / Status / Lock / Name) avant la saisie du CTID.
+- Mention de révision interne affichée dans le menu principal.
 - Entrées menu séparées « clé SSH hôte » et « clé SSH manuelle » (remplacées par l'option **3** unifiée).
 - Entrées menu plates 7–10 pour la maintenance (déplacées dans le sous-menu **6**).
 - Raccourci menu `update-lxcs` (redondant avec Clean and update).

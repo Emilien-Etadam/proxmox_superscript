@@ -17,7 +17,7 @@
 #
 # Licence: MIT — Copyright (c) Emilien-Etadam
 # SPDX-License-Identifier: MIT
-# lxc-postconf-revision: 2026-08-15-list-from-conf
+# lxc-postconf-revision: 2026-09-24-select-by-ctid
 
 set -euo pipefail
 
@@ -28,6 +28,48 @@ CTID=""
 readonly COMMUNITY_SCRIPTS_BASE_URL="https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve"
 readonly COMMUNITY_CLEAN_LXCS_URL="${COMMUNITY_SCRIPTS_BASE_URL}/clean-lxcs.sh"
 readonly COMMUNITY_DISK_HEALTH_URL="${COMMUNITY_SCRIPTS_BASE_URL}/disk-health.sh"
+
+# Couleurs d'interface : terminal uniquement, absentes si NO_COLOR est défini
+# ou si stdout n'est pas un TTY (redirection, pipe).
+C_RESET=""
+C_BOLD=""
+C_DIM=""
+C_ACCENT=""
+C_ERR=""
+if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then
+    C_RESET=$'\033[0m'
+    C_BOLD=$'\033[1m'
+    C_DIM=$'\033[2m'
+    C_ACCENT=$'\033[1;36m'
+    C_ERR=$'\033[31m'
+fi
+
+# Affiche une entrée de menu : touche en accent, libellé en texte courant.
+#
+# Paramètres : $1 — touche ; $2 — libellé.
+# Effets de bord : écrit sur stdout.
+ui_item() {
+    printf '  %s%s%s  %s\n' "$C_ACCENT" "$1" "$C_RESET" "$2"
+}
+
+# Affiche une erreur explicite (préfixe stable « ERREUR : »).
+#
+# Paramètres : $1 — message, sans préfixe.
+# Effets de bord : écrit sur stdout.
+ui_error() {
+    printf '%sERREUR : %s%s\n' "$C_ERR" "$1" "$C_RESET"
+}
+
+# Retire les espaces en tête et en fin de chaîne.
+#
+# Paramètres : $1 — texte saisi.
+# Stdout : texte assaini. Retour : 0.
+trim_whitespace() {
+    local value="$1"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    printf '%s' "$value"
+}
 
 # Répertoire des configs LXC du nœud local (pmxcfs).
 #
@@ -91,78 +133,65 @@ ct_status_safe() {
     fi
 }
 
-# Affiche une table VMID / Status / Lock / Name depuis les configs locales.
-#
-# Paramètres : $1 — (optionnel) répertoire de configs ; sinon local_lxc_conf_dir.
-# Retour : 0 si au moins un CT ; 1 sinon (configs absentes ou liste vide).
-print_local_ct_table() {
-    local confdir="${1:-}"
-    if [[ -z "$confdir" ]]; then
-        if ! confdir=$(local_lxc_conf_dir); then
-            echo "ERREUR : configs LXC introuvables (/etc/pve/local). pmxcfs est-il monté ?"
-            return 1
-        fi
-    fi
-    if [[ ! -d "$confdir" ]]; then
-        echo "(aucun conteneur sur ce nœud)"
-        return 1
-    fi
-
-    local -a ids=()
-    mapfile -t ids < <(list_local_ct_ids "$confdir")
-    if [[ "${#ids[@]}" -eq 0 ]]; then
-        echo "(aucun conteneur sur ce nœud)"
-        return 1
-    fi
-
-    local ctid name lock status
-    printf '%-10s %-12s %-12s %s\n' "VMID" "Status" "Lock" "Name"
-    for ctid in "${ids[@]}"; do
-        name=$(awk -F': *' '/^hostname:/{print $2; exit}' "$confdir/${ctid}.conf" 2>/dev/null || true)
-        lock=$(awk -F': *' '/^lock:/{print $2; exit}' "$confdir/${ctid}.conf" 2>/dev/null || true)
-        status=$(ct_status_safe "$ctid")
-        printf '%-10s %-12s %-12s %s\n' "$ctid" "$status" "${lock:-}" "${name:-CT${ctid}}"
-    done
-}
-
-# Affiche la liste des conteneurs, demande un CTID et démarre le CT si nécessaire.
+# Demande le CTID déjà visible dans Proxmox et démarre le CT si nécessaire.
+# N'énumère pas les conteneurs : la sélection se fait par l'identifiant affiché.
 #
 # Paramètres : aucun (lit CTID sur stdin).
 # Effets de bord : met à jour la variable globale CTID ; peut démarrer le conteneur (pct start).
 # Retour : 0 si le conteneur est utilisable, 1 sinon.
 select_ct() {
-    echo "Conteneurs disponibles :"
-    print_local_ct_table || return 1
-    echo ""
-    read -rp "CTID du conteneur : " CTID
-
-    if [[ ! "$CTID" =~ ^[0-9]+$ ]]; then
-        echo "ERREUR : CTID invalide."
+    local confdir=""
+    if ! confdir=$(local_lxc_conf_dir); then
+        ui_error "configs LXC introuvables (/etc/pve/local). pmxcfs est-il monté ?"
+        CTID=""
         return 1
     fi
 
-    local confdir
-    if ! confdir=$(local_lxc_conf_dir) || [[ ! -f "$confdir/${CTID}.conf" ]]; then
-        echo "ERREUR : conteneur $CTID introuvable sur ce nœud."
+    local -a ids=()
+    if [[ -d "$confdir" ]]; then
+        mapfile -t ids < <(list_local_ct_ids "$confdir")
+    fi
+    if [[ "${#ids[@]}" -eq 0 ]]; then
+        ui_error "aucun conteneur sur ce nœud."
+        CTID=""
+        return 1
+    fi
+
+    printf '\n%s%s%s\n\n' "$C_BOLD" "Conteneur" "$C_RESET"
+    printf '  %s%s%s\n\n' "$C_DIM" "Saisissez le CTID affiché dans Proxmox." "$C_RESET"
+    read -rp "  CTID : " CTID
+    CTID=$(trim_whitespace "$CTID")
+
+    if [[ ! "$CTID" =~ ^[0-9]+$ ]]; then
+        ui_error "CTID invalide."
+        CTID=""
+        return 1
+    fi
+
+    if [[ ! -f "$confdir/${CTID}.conf" ]]; then
+        ui_error "conteneur ${CTID} introuvable sur ce nœud."
+        CTID=""
         return 1
     fi
 
     local status
     status=$(ct_status_safe "$CTID")
     if [[ "$status" == "stopped" ]]; then
-        local start
-        read -rp "Le conteneur $CTID est arrêté. Démarrer ? (o/n) : " start
+        local start=""
+        read -rp "Le conteneur ${CTID} est arrêté. Démarrer ? (o/n) : " start
         if [[ "$start" != "o" ]]; then
             echo "[!] Annulé."
+            CTID=""
             return 1
         fi
         if ! pct start "$CTID"; then
-            echo "ERREUR : impossible de démarrer le conteneur $CTID."
+            ui_error "impossible de démarrer le conteneur ${CTID}."
+            CTID=""
             return 1
         fi
         sleep 3
     elif [[ "$status" != "running" ]]; then
-        echo "[!] Statut de $CTID indéterminé. Un socket LXC cassé peut bloquer pct exec."
+        echo "[!] Statut de ${CTID} indéterminé. Un socket LXC cassé peut bloquer pct exec."
     fi
 }
 
@@ -171,17 +200,16 @@ select_ct() {
 # Paramètres : aucun.
 # Effets de bord : aucun.
 show_menu() {
-    echo ""
-    echo "=== Post-config Proxmox ==="
-    echo "(rev skip-stopped-v2)"
-    echo "1) Renommer un conteneur"
-    echo "2) Auto-login root sur console tty"
-    echo "3) Injecter une clé SSH"
-    echo "4) Réplication + HA (tous les CT/VM)"
-    echo "5) Personnaliser le prompt root (couleur selon CTID)"
-    echo "6) Maintenance..."
-    echo "0) Quitter"
-    echo ""
+    printf '\n%s%s%s\n\n' "$C_BOLD" "Post-config Proxmox" "$C_RESET"
+    ui_item "1" "Renommer un conteneur"
+    ui_item "2" "Auto-login root sur console tty"
+    ui_item "3" "Injecter une clé SSH"
+    ui_item "4" "Réplication + HA (tous les CT/VM)"
+    ui_item "5" "Personnaliser le prompt root (couleur selon CTID)"
+    ui_item "6" "Maintenance..."
+    printf '\n'
+    ui_item "0" "Quitter"
+    printf '\n'
 }
 
 # Affiche le sous-menu Maintenance sur stdout.
@@ -189,13 +217,13 @@ show_menu() {
 # Paramètres : aucun.
 # Effets de bord : aucun.
 show_maintenance_menu() {
-    echo ""
-    echo "=== Maintenance ==="
-    echo "1) Nettoyer un conteneur (espace disque)"
-    echo "2) Clean and update tous les LXC (community-scripts)"
-    echo "3) Santé disques SMART (community-scripts)"
-    echo "0) Retour"
-    echo ""
+    printf '\n%s%s%s\n\n' "$C_BOLD" "Maintenance" "$C_RESET"
+    ui_item "1" "Nettoyer un conteneur (espace disque)"
+    ui_item "2" "Clean and update tous les LXC (community-scripts)"
+    ui_item "3" "Santé disques SMART (community-scripts)"
+    printf '\n'
+    ui_item "0" "Retour"
+    printf '\n'
 }
 
 # Exécute une commande bash dans le conteneur CTID via pct exec.
@@ -295,12 +323,14 @@ SSHEOF
 inject_ssh() {
     select_ct || return 1
 
-    echo "Source de la clé :"
-    echo "1) Depuis authorized_keys hôte"
-    echo "2) Saisie manuelle"
-    echo "0) Annuler"
+    printf '\n%s%s%s\n\n' "$C_BOLD" "Source de la clé" "$C_RESET"
+    ui_item "1" "Depuis authorized_keys hôte"
+    ui_item "2" "Saisie manuelle"
+    printf '\n'
+    ui_item "0" "Annuler"
+    printf '\n'
     local source
-    read -rp "Choix : " source
+    read -rp "  Choix : " source
 
     case "$source" in
         1)
@@ -735,7 +765,7 @@ maintenance_menu() {
     while true; do
         show_maintenance_menu
         local mchoice=""
-        read -rp "Choix : " mchoice
+        read -rp "  Choix : " mchoice
         case "$mchoice" in
             1) cleanup_ct || true ;;
             2) run_community_clean_and_update_lxcs || true ;;
@@ -753,7 +783,7 @@ if [[ "${LXC_POSTCONF_SOURCE_ONLY:-0}" != "1" ]]; then
     while true; do
         show_menu
         choice=""
-        read -rp "Choix : " choice
+        read -rp "  Choix : " choice
         case "$choice" in
             1) rename_ct || true ;;
             2) setup_autologin || true ;;
