@@ -7,7 +7,7 @@ Fonctions principales :
 - renommage, auto-login console, injection de clés SSH (hôte ou saisie)
 - prompt root coloré selon le CTID
 - réplication ZFS + HA (cluster 2 nœuds)
-- sous-menu **Maintenance** : nettoyage local d'un CT, et raccourcis [community-scripts/ProxmoxVE](https://github.com/community-scripts/ProxmoxVE) (`clean-lxcs` / clean and update, `disk-health`)
+- sous-menu **Maintenance** : nettoyage local d'un CT, installation/activation d'`unattended-upgrades` + `needrestart` sur les LXC Debian running, et raccourcis [community-scripts/ProxmoxVE](https://github.com/community-scripts/ProxmoxVE) (`clean-lxcs` / clean and update, `disk-health`)
 
 ## Prérequis
 
@@ -68,6 +68,7 @@ Maintenance
   1  Nettoyer un conteneur (espace disque)
   2  Clean and update tous les LXC (community-scripts)
   3  Santé disques SMART (community-scripts)
+  4  unattended-upgrades + needrestart (LXC Debian running)
 
   0  Retour
 ```
@@ -123,6 +124,7 @@ Les options **1**, **2**, **3** et **5**, ainsi que Maintenance **1**, demandent
 | **1** | Nettoyer un conteneur | Nettoyage **local** d'un CT : caches paquets, journaux, temp ; prune Docker/Podman si détecté (volumes optionnels). Affiche l'usage disque avant/après. |
 | **2** | Clean and update LXC | Exécute [`clean-lxcs.sh`](https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve/clean-lxcs.sh) après un patch lxc-postconf (rev **skip-stopped-v2**) : les CT **non running sont ignorés** (pas de `pct start`). Nettoyage multi-CT puis `apt update`. |
 | **3** | Santé disques SMART | Confirme puis exécute [`disk-health.sh`](https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/tools/pve/disk-health.sh) sur l'**hôte** (rapport SMART, self-test court optionnel). |
+| **4** | unattended-upgrades + needrestart | Sur **tous les LXC running** du nœud (famille Debian) : installe **et active** `unattended-upgrades` + `needrestart`. Confirmation préalable ; CT arrêtés et guests hors Debian ignorés. |
 | **0** | Retour | Revient au menu principal. |
 
 | Option | Périmètre |
@@ -130,6 +132,20 @@ Les options **1**, **2**, **3** et **5**, ainsi que Maintenance **1**, demandent
 | Maintenance **1** | Un seul CT, nettoyage **local** (Docker/Podman inclus) |
 | Maintenance **2** | Multi-CT via community-scripts (clean + refresh listes apt) |
 | Maintenance **3** | Disques physiques de l'**hôte** Proxmox (pas les CT) |
+| Maintenance **4** | Tous les LXC **running** du nœud, famille Debian uniquement |
+
+#### Maintenance **4** — ce qui est activé
+
+Par CT Debian running, après confirmation :
+
+| Élément | Action |
+|--------|--------|
+| Paquets | `apt-get install unattended-upgrades needrestart` |
+| Périodicité apt | Écrit `/etc/apt/apt.conf.d/20auto-upgrades` (`Update-Package-Lists` + `Unattended-Upgrade` à `"1"`) + `dpkg-reconfigure` non-interactif |
+| systemd (si présent) | `enable` + `start` de `apt-daily.timer`, `apt-daily-upgrade.timer`, et `unattended-upgrades.service` |
+| needrestart | Hook apt du paquet + `/etc/needrestart/conf.d/lxc-postconf.conf` (`$nrconf{restart} = 'a'`, redémarrage auto des services) |
+
+**Non activé (volontairement)** : reboot automatique du CT après upgrade noyau (`Automatic-Reboot`) — peu pertinent en LXC (noyau hôte) et risqué.
 
 Les entrées community-scripts (**2**–**3**) délèguent à des scripts **externes** téléchargés à la volée (confirmation + allowlist d'URL).
 

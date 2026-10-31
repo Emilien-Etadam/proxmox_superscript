@@ -17,7 +17,7 @@
 #
 # Licence: MIT — Copyright (c) Emilien-Etadam
 # SPDX-License-Identifier: MIT
-# lxc-postconf-revision: 2026-09-24-select-by-ctid
+# lxc-postconf-revision: 2026-10-31-unattended-needrestart
 
 set -euo pipefail
 
@@ -221,6 +221,7 @@ show_maintenance_menu() {
     ui_item "1" "Nettoyer un conteneur (espace disque)"
     ui_item "2" "Clean and update tous les LXC (community-scripts)"
     ui_item "3" "Santé disques SMART (community-scripts)"
+    ui_item "4" "unattended-upgrades + needrestart (LXC Debian running)"
     printf '\n'
     ui_item "0" "Retour"
     printf '\n'
@@ -664,6 +665,189 @@ run_community_disk_health() {
     run_community_script "disk-health" "$COMMUNITY_DISK_HEALTH_URL" || true
 }
 
+# Installe et active unattended-upgrades + needrestart dans un CT Debian (famille).
+#
+# Paramètres : $1 — CTID running (chiffres uniquement, déjà validé côté hôte).
+# Retour : 0 si OK, 2 si guest hors famille Debian / sans apt (ignoré), autre si échec.
+# Activation : 20auto-upgrades, dpkg-reconfigure, timers apt-daily*, service
+# unattended-upgrades ; needrestart via hook apt + conf.d mode « a » (pas de daemon).
+install_unattended_needrestart_in_ct() {
+    local ctid="$1"
+    if [[ ! "$ctid" =~ ^[0-9]+$ ]]; then
+        ui_error "CTID invalide passé à install_unattended_needrestart_in_ct."
+        return 1
+    fi
+
+    pct exec "$ctid" -- env -i \
+        PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+        HOME=/root \
+        TERM=xterm \
+        DEBIAN_FRONTEND=noninteractive \
+        bash -s <<'GUEST'
+set -euo pipefail
+
+if ! command -v apt-get >/dev/null 2>&1; then
+    echo "[!] apt introuvable : ignoré (guest hors Debian)."
+    exit 2
+fi
+
+if [[ ! -r /etc/os-release ]]; then
+    echo "[!] /etc/os-release illisible : ignoré."
+    exit 2
+fi
+
+os_id=""
+os_id_like=""
+os_id=$(awk -F= '/^ID=/{ gsub(/"/, "", $2); print $2; exit }' /etc/os-release)
+os_id_like=$(awk -F= '/^ID_LIKE=/{ gsub(/"/, "", $2); print $2; exit }' /etc/os-release)
+
+is_debian_family=0
+case "$os_id" in
+    debian|ubuntu) is_debian_family=1 ;;
+esac
+if [[ "$is_debian_family" -eq 0 ]]; then
+    case " ${os_id_like} " in
+        *" debian "*|*" ubuntu "*) is_debian_family=1 ;;
+    esac
+fi
+if [[ "$is_debian_family" -eq 0 ]]; then
+    echo "[!] OS '${os_id:-?}': ignoré (pas une famille Debian)."
+    exit 2
+fi
+
+apt-get update -qq
+apt-get install -y --no-install-recommends unattended-upgrades needrestart
+
+echo "unattended-upgrades unattended-upgrades/enable_auto_updates boolean true" \
+    | debconf-set-selections
+dpkg-reconfigure -f noninteractive unattended-upgrades
+
+# Garantit la périodicité même si dpkg-reconfigure a un comportement divergent.
+cat > /etc/apt/apt.conf.d/20auto-upgrades <<'AUTO'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+AUTO
+
+# LXC headless : redémarrer automatiquement les services qui le nécessitent.
+mkdir -p /etc/needrestart/conf.d
+cat > /etc/needrestart/conf.d/lxc-postconf.conf <<'NR'
+# Généré par lxc-postconf — redémarrage automatique des services (mode a).
+$nrconf{restart} = 'a';
+NR
+
+if ! command -v systemctl >/dev/null 2>&1; then
+    echo "[!] systemctl absent : paquets + configs OK, pas d'enable/start systemd."
+    echo "[*] unattended-upgrades + needrestart configurés sans systemd (ID=${os_id})."
+    exit 0
+fi
+
+enable_start_unit() {
+    local unit="$1"
+    if systemctl list-unit-files "${unit}" >/dev/null 2>&1 \
+        || systemctl cat "${unit}" >/dev/null 2>&1; then
+        systemctl enable "${unit}" >/dev/null 2>&1 || true
+        systemctl start "${unit}" >/dev/null 2>&1 || true
+        echo "[*] systemd : enable+start ${unit}"
+    fi
+}
+
+# Timers apt : déclenchent update / unattended-upgrade au quotidien.
+enable_start_unit apt-daily.timer
+enable_start_unit apt-daily-upgrade.timer
+# Service unattended-upgrades (install à l'arrêt ; présent sur Debian récent).
+enable_start_unit unattended-upgrades.service
+
+echo "[*] unattended-upgrades + needrestart installés et activés (ID=${os_id})."
+GUEST
+}
+
+# Installe et active unattended-upgrades + needrestart sur les LXC running Debian.
+#
+# Paramètres : aucun (confirmation stdin).
+# Effets de bord : apt + configs + enable/start systemd dans chaque CT running.
+# CT arrêtés / non Debian / échecs individuels : skip ou bilan (la boucle continue).
+# Retour : 0 après traitement, 1 si aucun CT running, configs absentes ou annulation.
+install_unattended_needrestart_running_cts() {
+    local confdir
+    if ! confdir=$(local_lxc_conf_dir); then
+        ui_error "configs LXC introuvables (/etc/pve/local). pmxcfs est-il monté ?"
+        return 1
+    fi
+
+    local -a ids=()
+    mapfile -t ids < <(list_local_ct_ids "$confdir")
+    if [[ "${#ids[@]}" -eq 0 ]]; then
+        echo "(aucun conteneur sur ce nœud)"
+        return 1
+    fi
+
+    local -a running=()
+    local -a skipped_stopped=()
+    local ctid status name
+    for ctid in "${ids[@]}"; do
+        status=$(ct_status_safe "$ctid")
+        if [[ "$status" == "running" ]]; then
+            running+=("$ctid")
+        else
+            skipped_stopped+=("$ctid")
+        fi
+    done
+
+    if [[ "${#running[@]}" -eq 0 ]]; then
+        echo "[!] Aucun conteneur running sur ce nœud."
+        return 1
+    fi
+
+    echo "Conteneurs running (cibles) :"
+    printf '%-10s %s\n' "VMID" "Name"
+    for ctid in "${running[@]}"; do
+        name=$(awk -F': *' '/^hostname:/{print $2; exit}' "$confdir/${ctid}.conf" 2>/dev/null || true)
+        # Affichage seulement : ne jamais interpoler name dans une commande shell.
+        if [[ -n "$name" && "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            printf '%-10s %s\n' "$ctid" "$name"
+        else
+            printf '%-10s %s\n' "$ctid" "CT${ctid}"
+        fi
+    done
+    if [[ "${#skipped_stopped[@]}" -gt 0 ]]; then
+        echo ""
+        echo "Ignorés (non running) : ${skipped_stopped[*]}"
+    fi
+    echo ""
+    local confirm
+    read -rp "Installer et activer unattended-upgrades + needrestart sur les CT running (Debian) ? (o/n) : " confirm
+    if [[ "$confirm" != "o" ]]; then
+        echo "[!] Annulé."
+        return 1
+    fi
+
+    local ok=0 skip=0 fail=0 rc
+    for ctid in "${running[@]}"; do
+        echo "=== LXC $ctid ==="
+        rc=0
+        install_unattended_needrestart_in_ct "$ctid" || rc=$?
+        case "$rc" in
+            0)
+                echo "[OK] unattended-upgrades + needrestart activés sur $ctid."
+                ok=$((ok + 1))
+                ;;
+            2)
+                skip=$((skip + 1))
+                ;;
+            *)
+                echo "[!] Échec sur $ctid (code $rc)."
+                fail=$((fail + 1))
+                ;;
+        esac
+    done
+
+    echo "[*] Bilan : $ok OK, $skip ignoré(s) (non Debian), $fail échec(s), ${#skipped_stopped[@]} non running."
+    if [[ "$fail" -gt 0 && "$ok" -eq 0 ]]; then
+        return 1
+    fi
+    return 0
+}
+
 # Configure la réplication ZFS (pvesr) et le HA pour tous les CT et VM du cluster.
 #
 # Paramètres : aucun (nœud cible et schedule sur stdin, défauts pve2 et */15).
@@ -759,7 +943,7 @@ setup_replication_ha() {
 # Boucle du sous-menu Maintenance (retour = 0).
 #
 # Paramètres : aucun.
-# Effets de bord : appelle cleanup_ct / community-scripts selon le choix.
+# Effets de bord : appelle cleanup_ct / community-scripts / unattended selon le choix.
 # Les échecs / annulations ne quittent pas le sous-menu (set -e).
 maintenance_menu() {
     while true; do
@@ -770,6 +954,7 @@ maintenance_menu() {
             1) cleanup_ct || true ;;
             2) run_community_clean_and_update_lxcs || true ;;
             3) run_community_disk_health || true ;;
+            4) install_unattended_needrestart_running_cts || true ;;
             0) return 0 ;;
             *) echo "Choix invalide." ;;
         esac
