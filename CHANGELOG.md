@@ -14,7 +14,8 @@ et ce projet respecte [Semantic Versioning](https://semver.org/lang/fr/).
 - Raccourcis community-scripts : `clean-lxcs` (libellé **Clean and update**), `disk-health` (confirmation + allowlist d'URL).
 - Sous-menu **Maintenance** regroupant nettoyage local + raccourcis community-scripts.
 - Injection SSH : déduplication des lignes déjà présentes dans `authorized_keys` du CT.
-- Maintenance **4** : installe **et active** `unattended-upgrades` + `needrestart` sur tous les LXC **running** famille Debian (configs apt, timers systemd, conf needrestart mode `a`).
+- Maintenance **4** : installe **et active** `unattended-upgrades` + `needrestart` sur tous les LXC **running** famille Debian (configs apt, timers systemd, conf needrestart mode `a`) — **sans** Automatic-Reboot.
+- Maintenance **5** : un CT (saisie CTID) — même base + `Unattended-Upgrade::Automatic-Reboot` / `Automatic-Reboot-Time "00:00"` (reboot seulement si une maj l'exige).
 
 ### Changed
 

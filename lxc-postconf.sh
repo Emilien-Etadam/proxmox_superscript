@@ -222,6 +222,7 @@ show_maintenance_menu() {
     ui_item "2" "Clean and update tous les LXC (community-scripts)"
     ui_item "3" "Santé disques SMART (community-scripts)"
     ui_item "4" "unattended-upgrades + needrestart (LXC Debian running)"
+    ui_item "5" "Automatic-Reboot unattended (un CT, 00:00)"
     printf '\n'
     ui_item "0" "Retour"
     printf '\n'
@@ -848,6 +849,86 @@ install_unattended_needrestart_running_cts() {
     return 0
 }
 
+# Active Unattended-Upgrade::Automatic-Reboot à 00:00 dans un CT.
+#
+# Paramètres : $1 — CTID (chiffres uniquement).
+# Effets de bord : écrit /etc/apt/apt.conf.d/51lxc-postconf-auto-reboot.
+# Ne planifie pas de reboot quotidien : reboot seulement si une maj pose reboot-required.
+# Retour : 0 si OK, autre si échec pct/écriture.
+enable_automatic_reboot_in_ct() {
+    local ctid="$1"
+    if [[ ! "$ctid" =~ ^[0-9]+$ ]]; then
+        ui_error "CTID invalide passé à enable_automatic_reboot_in_ct."
+        return 1
+    fi
+
+    pct exec "$ctid" -- env -i \
+        PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+        HOME=/root \
+        TERM=xterm \
+        bash -s <<'GUEST'
+set -euo pipefail
+
+if [[ ! -d /etc/apt/apt.conf.d ]]; then
+    echo "ERREUR : /etc/apt/apt.conf.d introuvable."
+    exit 1
+fi
+
+cat > /etc/apt/apt.conf.d/51lxc-postconf-auto-reboot <<'REBOOT'
+// Généré par lxc-postconf — reboot seulement si une mise à jour l'exige
+// (fichier reboot-required), dans la fenêtre autour de 00:00. Pas un reboot quotidien forcé.
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "00:00";
+REBOOT
+
+echo "[*] Automatic-Reboot activé (00:00, si maj l'exige)."
+GUEST
+}
+
+# Installe/active unattended + needrestart sur un CT, puis Automatic-Reboot à minuit.
+#
+# Paramètres : aucun (select_ct + confirmation stdin).
+# Effets de bord : même base que Maintenance 4 sur un seul CT, plus drop-in auto-reboot.
+# Retour : 0 si succès, 1 si annulation / non Debian / échec.
+setup_unattended_auto_reboot_one_ct() {
+    select_ct || return 1
+
+    echo ""
+    echo "Sur CT ${CTID} :"
+    echo "  - installer/activer unattended-upgrades + needrestart (si besoin)"
+    echo "  - activer Automatic-Reboot à 00:00 (uniquement si une maj l'exige,"
+    echo "    pas un reboot forcé tous les jours)"
+    echo ""
+    local confirm
+    read -rp "Continuer sur CT ${CTID} ? (o/n) : " confirm
+    if [[ "$confirm" != "o" ]]; then
+        echo "[!] Annulé."
+        return 1
+    fi
+
+    local rc=0
+    install_unattended_needrestart_in_ct "$CTID" || rc=$?
+    case "$rc" in
+        0) ;;
+        2)
+            ui_error "CT ${CTID} hors famille Debian (ou sans apt)."
+            return 1
+            ;;
+        *)
+            ui_error "échec install/activation unattended sur ${CTID} (code ${rc})."
+            return 1
+            ;;
+    esac
+
+    if ! enable_automatic_reboot_in_ct "$CTID"; then
+        ui_error "échec écriture Automatic-Reboot sur ${CTID}."
+        return 1
+    fi
+
+    echo "[OK] CT ${CTID} : unattended-upgrades + needrestart + Automatic-Reboot 00:00."
+    return 0
+}
+
 # Configure la réplication ZFS (pvesr) et le HA pour tous les CT et VM du cluster.
 #
 # Paramètres : aucun (nœud cible et schedule sur stdin, défauts pve2 et */15).
@@ -955,6 +1036,7 @@ maintenance_menu() {
             2) run_community_clean_and_update_lxcs || true ;;
             3) run_community_disk_health || true ;;
             4) install_unattended_needrestart_running_cts || true ;;
+            5) setup_unattended_auto_reboot_one_ct || true ;;
             0) return 0 ;;
             *) echo "Choix invalide." ;;
         esac
