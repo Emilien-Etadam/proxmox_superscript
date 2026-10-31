@@ -10,14 +10,14 @@
 # Prérequis:
 #   - Proxmox VE 8.x, exécution en root sur l'hôte
 #   - Outils : pct, qm, pvesr, ha-manager (selon les options du menu)
-#   - Option 5 (réplication + HA) : cluster 2 nœuds, ZFS, réplication configurée
+#   - Option 4 (réplication + HA) : cluster 2 nœuds, ZFS, réplication configurée
 #   - Sous-menu Maintenance (community-scripts) : curl, whiptail ; téléchargent
 #     et exécutent du code distant depuis github.com/community-scripts/ProxmoxVE
 #     (disk-health peut aussi installer smartmontools / nvme-cli via apt)
 #
 # Licence: MIT — Copyright (c) Emilien-Etadam
 # SPDX-License-Identifier: MIT
-# lxc-postconf-revision: 2026-10-31-unattended-needrestart
+# lxc-postconf-revision: 2026-10-31-replication-ha-serial
 
 set -euo pipefail
 
@@ -932,11 +932,14 @@ setup_unattended_auto_reboot_one_ct() {
 # Configure la réplication ZFS (pvesr) et le HA pour tous les CT et VM du cluster.
 #
 # Paramètres : aucun (nœud cible et schedule sur stdin, défauts pve2 et */15).
-# Effets de bord : crée des jobs pvesr, lance pvesr run en arrière-plan, ajoute des ressources HA.
-# Les CT avec bind mounts sont ignorés pour la réplication ; les échecs pvesr/HA n'interrompent pas le script.
+# Effets de bord : crée des jobs pvesr, lance pvesr run en série (verrou global
+#   /var/lock/pvesr.lck), ajoute des ressources HA seulement si la sync initiale réussit.
+# Les CT avec bind mounts sont ignorés pour la réplication (HA toujours tenté).
+# Retour : 0 si tout OK, 1 si au moins une création/sync/HA a échoué (pas de faux [OK]).
 setup_replication_ha() {
     local target_node="pve2"
     local schedule="*/15"
+    local -a repl_failures=()
 
     local input_node
     read -rp "Noeud cible [$target_node] : " input_node
@@ -969,30 +972,51 @@ setup_replication_ha() {
     # Applique réplication et HA pour un CT ou une VM (id + type).
     #
     # Paramètres : $1 — VMID/CTID ; $2 — type (`ct` ou `vm`).
-    # Effets de bord : pvesr create-local-job/run, ha-manager add (erreurs journalisées, pas de sortie set -e).
+    # Effets de bord : pvesr create-local-job + run synchrone, ha-manager add ;
+    #   les échecs sont journalisés dans repl_failures (pas de set -e sur ces appels).
     process_id() {
         local vmid="$1"
         local type="$2"
         local fqid="${type}:${vmid}"
+        local repl_ready=0
 
         if ! in_list "$vmid" "$repl_resources"; then
             if [[ "$type" == "ct" ]] && has_bind_mount "$vmid"; then
                 echo "[!] SKIP réplication $fqid (bind mount détecté)"
+                repl_ready=1
             else
                 echo "[+] Création réplication pour $fqid vers $target_node"
                 if pvesr create-local-job "${vmid}-0" "$target_node" --schedule "$schedule" 2>&1; then
-                    pvesr run --id "${vmid}-0" 2>&1 &
+                    # Séquentiel : pvesr sérialise via /var/lock/pvesr.lck ; des run
+                    # parallèles provoquent des timeouts et des volumes cibles incohérents.
+                    echo "[+] Sync initiale $fqid (séquentielle)"
+                    if pvesr run --id "${vmid}-0" 2>&1; then
+                        repl_ready=1
+                    else
+                        echo "[!] ERREUR sync initiale $fqid"
+                        repl_failures+=("$fqid")
+                    fi
                 else
                     echo "[!] ERREUR réplication $fqid"
+                    repl_failures+=("$fqid")
                 fi
             fi
         else
-            echo "[=] Réplication déjà OK pour $fqid"
+            echo "[=] Réplication déjà présente pour $fqid"
+            repl_ready=1
+        fi
+
+        if [[ "$repl_ready" -ne 1 ]]; then
+            echo "[!] HA ignoré pour $fqid (réplication en échec)"
+            return 0
         fi
 
         if ! in_list "$fqid" "$ha_resources"; then
             echo "[+] Ajout HA pour $fqid"
-            ha-manager add "$fqid" --state started 2>&1 || echo "[!] ERREUR HA $fqid"
+            if ! ha-manager add "$fqid" --state started 2>&1; then
+                echo "[!] ERREUR HA $fqid"
+                repl_failures+=("HA:$fqid")
+            fi
         else
             echo "[=] HA déjà OK pour $fqid"
         fi
@@ -1016,9 +1040,14 @@ setup_replication_ha() {
         process_id "$vmid" "vm"
     done
 
-    echo "[*] Attente fin des réplications initiales..."
-    wait
+    if ((${#repl_failures[@]} > 0)); then
+        echo "[!] Réplication + HA terminé avec erreurs :"
+        printf '    - %s\n' "${repl_failures[@]}"
+        echo "[!] Volume zombie sur la cible ou job incohérent : retirer le volume du target ou supprimer puis recréer le job pvesr."
+        return 1
+    fi
     echo "[OK] Réplication + HA terminé."
+    return 0
 }
 
 # Boucle du sous-menu Maintenance (retour = 0).

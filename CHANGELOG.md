@@ -40,6 +40,7 @@ et ce projet respecte [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Fixed
 
+- Option **4** (réplication + HA) : syncs initiales `pvesr run` **sérielles** (plus de `&` parallèle qui timeout sur `/var/lock/pvesr.lck`) ; HA ajouté seulement si la sync réussit ; échecs listés, plus de faux `[OK]`. Jobs déjà cassés (`No common base snapshot`) : nettoyage manuel volume cible / recreate job avant de relancer.
 - Liste des CT : ne plus appeler `pct list` (vmstatus / socket LXC). Un CT au socket cassé produisait `Use of uninitialized value in subtraction` (`PVE/LXC.pm:339`) et `failed to read from command socket: Connection reset by peer`, puis une table vide. Lecture des configs `/etc/pve/local/lxc/*.conf` et statut via `pct status`.
 - Une annulation / erreur d'option ne quitte plus le script sous `set -e` (menu principal et Maintenance).
 - Clean and update : crash `$1: unbound variable` (newline mangée par `$()` collait `function run_lxc_clean` dans un commentaire).
