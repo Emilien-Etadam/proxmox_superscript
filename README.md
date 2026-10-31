@@ -111,7 +111,7 @@ Nouveau nom : app-web-prod
 | **1** | Renommer un conteneur | Met à jour le hostname Proxmox (`pct set --hostname`) et, si le CT est démarré, le hostname dans le guest (`hostnamectl` ou `hostname`). |
 | **2** | Auto-login root console | Configure `container-getty@` pour connecter automatiquement root sur la console Proxmox (TTY série du CT). |
 | **3** | Injecter une clé SSH | Sous-choix : depuis `/root/.ssh/authorized_keys` de l'hôte (une ligne ou `all`), ou saisie manuelle. Déduplique les lignes déjà présentes dans le CT. |
-| **4** | Réplication + HA | Pour **chaque** CT et VM : crée un job `pvesr` vers le nœud cible (défaut `pve2`, schedule `*/15`) si absent, lance une sync initiale, puis enregistre la ressource dans `ha-manager` si absente. |
+| **4** | Réplication + HA | Pour **chaque** CT et VM : crée un job `pvesr` vers le nœud cible (défaut `pve2`, schedule `*/15`) si absent, lance une **sync initiale séquentielle**, puis enregistre la ressource dans `ha-manager` seulement si la sync a réussi (échecs listés, pas de faux `[OK]`). En cas de `No common base snapshot` : détruire le volume zombie sur la cible ou `pvesr delete <VMID>-0`, puis relancer **4**. |
 | **5** | Prompt root coloré | Installe `/etc/profile.d/lxc-postconf-prompt.sh` dans le CT : invite `===[ user@host cwd ]===` avec une couleur **ANSI stable** calculée à partir du **CTID** (`31 + CTID % 8`). |
 | **6** | Maintenance… | Ouvre le sous-menu Maintenance. |
 | **0** | Quitter | Termine le script. |
