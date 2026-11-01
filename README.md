@@ -5,7 +5,7 @@ Script bash interactif de post-configuration pour conteneurs LXC et machines vir
 Fonctions principales :
 
 - renommage, auto-login console, injection de clés SSH (hôte ou saisie)
-- prompt root coloré selon le CTID
+- prompt root : nom LXC + CTID surlignés (fond ANSI selon CTID)
 - réplication ZFS + HA (cluster 2 nœuds)
 - sous-menu **Maintenance** : nettoyage local d'un CT, installation/activation d'`unattended-upgrades` + `needrestart` (bulk running ou un CT avec `Automatic-Reboot` à minuit), et raccourcis [community-scripts/ProxmoxVE](https://github.com/community-scripts/ProxmoxVE) (`clean-lxcs` / clean and update, `disk-health`)
 
@@ -54,7 +54,7 @@ Post-config Proxmox
   2  Auto-login root sur console tty
   3  Injecter une clé SSH
   4  Réplication + HA (tous les CT/VM)
-  5  Personnaliser le prompt root (couleur selon CTID)
+  5  Personnaliser le prompt root (surlignage selon CTID)
   6  Maintenance...
 
   0  Quitter
@@ -112,7 +112,7 @@ Nouveau nom : app-web-prod
 | **2** | Auto-login root console | Configure `container-getty@` pour connecter automatiquement root sur la console Proxmox (TTY série du CT). |
 | **3** | Injecter une clé SSH | Sous-choix : depuis `/root/.ssh/authorized_keys` de l'hôte (une ligne ou `all`), ou saisie manuelle. Déduplique les lignes déjà présentes dans le CT. |
 | **4** | Réplication + HA | Pour **chaque** CT et VM : crée un job `pvesr` vers le nœud cible (défaut `pve2`, schedule `*/15`) si absent, lance une **sync initiale séquentielle**, puis enregistre la ressource dans `ha-manager` seulement si la sync a réussi (échecs listés, pas de faux `[OK]`). En cas de `No common base snapshot` : détruire le volume zombie sur la cible ou `pvesr delete <VMID>-0`, puis relancer **4**. |
-| **5** | Prompt root coloré | Installe `/etc/profile.d/lxc-postconf-prompt.sh` dans le CT : invite `===[ user@host cwd ]===` avec une couleur **ANSI stable** calculée à partir du **CTID** (`31 + CTID % 8`). |
+| **5** | Prompt root surligné | Installe `/etc/profile.d/lxc-postconf-prompt.sh` dans le CT : invite ` hostname CTID ` (nom LXC + numéro) en **texte blanc gras sur fond ANSI** stable selon le **CTID** (`40 + CTID % 8`), puis le répertoire courant. |
 | **6** | Maintenance… | Ouvre le sous-menu Maintenance. |
 | **0** | Quitter | Termine le script. |
 

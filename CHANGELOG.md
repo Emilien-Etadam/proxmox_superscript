@@ -19,6 +19,7 @@ et ce projet respecte [Semantic Versioning](https://semver.org/lang/fr/).
 
 ### Changed
 
+- Prompt root : affichage `hostname CTID` surlignés (fond ANSI `40 + CTID % 8`, texte blanc gras) à la place de `===[ user@host cwd ]===` en couleur de texte seule.
 - Sélection d'un conteneur : saisie du CTID affiché dans Proxmox, sans tableau de tous les conteneurs.
 - Menus : titre, actions puis sortie séparée, espacements plus larges ; couleurs sobres sur terminal (`NO_COLOR` ou sortie non interactive : texte seul).
 - Menu principal allégé et renuméroté : SSH unique (**3**), réplication+HA (**4**), prompt (**5**), Maintenance (**6**).

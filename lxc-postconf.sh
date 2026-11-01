@@ -205,7 +205,7 @@ show_menu() {
     ui_item "2" "Auto-login root sur console tty"
     ui_item "3" "Injecter une clé SSH"
     ui_item "4" "Réplication + HA (tous les CT/VM)"
-    ui_item "5" "Personnaliser le prompt root (couleur selon CTID)"
+    ui_item "5" "Personnaliser le prompt root (surlignage selon CTID)"
     ui_item "6" "Maintenance..."
     printf '\n'
     ui_item "0" "Quitter"
@@ -374,21 +374,21 @@ inject_ssh() {
     esac
 }
 
-# Installe un PS1 bash root dont la couleur ANSI dépend du CTID (stable par conteneur).
+# Installe un PS1 bash root : hostname LXC + CTID surlignés (fond ANSI selon CTID).
 #
 # Paramètres : aucun (sélection CT via select_ct).
 # Effets de bord : écrit /etc/profile.d/lxc-postconf-prompt.sh ; retire un ancien bloc .bashrc le cas échéant.
 setup_custom_ps1() {
     select_ct || return 1
-    local color=$(( 31 + (CTID % 8) ))
-    echo "[*] Configuration du prompt root (CTID=$CTID, couleur ANSI $color)..."
+    local bg=$(( 40 + (CTID % 8) ))
+    echo "[*] Configuration du prompt root (CTID=$CTID, fond ANSI $bg)..."
 
     pct exec "$CTID" -- env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root bash -c "
         install -d -m 755 /etc/profile.d
         cat > /etc/profile.d/lxc-postconf-prompt.sh <<'PROMPT_EOF'
-# lxc-postconf: PS1 personnalisé (couleur dérivée du CTID, CTID=${CTID})
+# lxc-postconf: PS1 personnalisé (fond dérivé du CTID, CTID=${CTID})
 if [ -n \"\${BASH_VERSION:-}\" ]; then
-  PS1=\"\\n\\[\\e[1;${color}m\\]===[ \\u@\\h \\w ]===\\[\\e[0m\\]\\n# \"
+  PS1=\"\\n\\[\\e[1;37;${bg}m\\] \\h ${CTID} \\[\\e[0m\\] \\w\\n# \"
   export PS1
 fi
 PROMPT_EOF
