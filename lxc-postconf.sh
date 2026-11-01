@@ -205,7 +205,7 @@ show_menu() {
     ui_item "2" "Auto-login root sur console tty"
     ui_item "3" "Injecter une clé SSH"
     ui_item "4" "Réplication + HA (tous les CT/VM)"
-    ui_item "5" "Personnaliser le prompt root (couleur selon CTID)"
+    ui_item "5" "Personnaliser le prompt root (un CT ou tous running)"
     ui_item "6" "Maintenance..."
     printf '\n'
     ui_item "0" "Quitter"
@@ -374,21 +374,26 @@ inject_ssh() {
     esac
 }
 
-# Installe un PS1 bash root dont la couleur ANSI dépend du CTID (stable par conteneur).
+# Installe le PS1 bash root (hostname + CTID surlignés) dans un CT donné.
 #
-# Paramètres : aucun (sélection CT via select_ct).
+# Paramètres : $1 — CTID (chiffres uniquement).
 # Effets de bord : écrit /etc/profile.d/lxc-postconf-prompt.sh ; retire un ancien bloc .bashrc le cas échéant.
-setup_custom_ps1() {
-    select_ct || return 1
-    local color=$(( 31 + (CTID % 8) ))
-    echo "[*] Configuration du prompt root (CTID=$CTID, couleur ANSI $color)..."
+# Retour : 0 si OK, 1 si CTID invalide ou échec pct exec.
+install_custom_ps1_in_ct() {
+    local ctid="$1"
+    if [[ ! "$ctid" =~ ^[0-9]+$ ]]; then
+        ui_error "CTID invalide passé à install_custom_ps1_in_ct."
+        return 1
+    fi
+    local bg=$(( 40 + (ctid % 8) ))
+    echo "[*] Prompt root (CTID=$ctid, fond ANSI $bg)..."
 
-    pct exec "$CTID" -- env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root bash -c "
+    pct exec "$ctid" -- env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root bash -c "
         install -d -m 755 /etc/profile.d
         cat > /etc/profile.d/lxc-postconf-prompt.sh <<'PROMPT_EOF'
-# lxc-postconf: PS1 personnalisé (couleur dérivée du CTID, CTID=${CTID})
+# lxc-postconf: PS1 personnalisé (fond dérivé du CTID, CTID=${ctid})
 if [ -n \"\${BASH_VERSION:-}\" ]; then
-  PS1=\"\\n\\[\\e[1;${color}m\\]===[ \\u@\\h \\w ]===\\[\\e[0m\\]\\n# \"
+  PS1=\"\\n\\[\\e[1;37;${bg}m\\] \\h ${ctid} \\[\\e[0m\\] \\w\\n# \"
   export PS1
 fi
 PROMPT_EOF
@@ -397,6 +402,139 @@ PROMPT_EOF
             sed -i '/# lxc-postconf: PS1 personnalisé/,/^PS1=/d' /root/.bashrc
         fi
     "
+}
+
+# Signale les CT présents sur d'autres nœuds du cluster (pmxcfs), non ciblables via pct local.
+#
+# Paramètres : aucun.
+# Effets de bord : message stdout si des configs LXC existent hors nœud local.
+# Retour : 0 toujours.
+warn_remote_lxc_not_targeted() {
+    local local_dir remote_node remote_ctid
+    local -a remote_hits=()
+    if ! local_dir=$(local_lxc_conf_dir); then
+        return 0
+    fi
+    [[ -d /etc/pve/nodes ]] || return 0
+
+    local nodedir
+    for nodedir in /etc/pve/nodes/*/lxc; do
+        [[ -d "$nodedir" ]] || continue
+        # Même nœud que local (symlink /etc/pve/local → nodes/<hostname>).
+        if [[ "$nodedir" -ef "$local_dir" ]]; then
+            continue
+        fi
+        remote_node="${nodedir%/lxc}"
+        remote_node="${remote_node##*/}"
+        local f
+        for f in "$nodedir"/*.conf; do
+            [[ -f "$f" ]] || continue
+            remote_ctid="${f##*/}"
+            remote_ctid="${remote_ctid%.conf}"
+            [[ "$remote_ctid" =~ ^[0-9]+$ ]] || continue
+            remote_hits+=("${remote_node}:${remote_ctid}")
+        done
+    done
+
+    if [[ "${#remote_hits[@]}" -gt 0 ]]; then
+        echo ""
+        echo "[!] CT sur d'autres nœuds (non modifiés ici — pct est local) : ${remote_hits[*]}"
+        echo "    Relancer l'option 5 sur chaque nœud pour les couvrir."
+    fi
+}
+
+# Applique le prompt à tous les LXC running du nœud local.
+#
+# Paramètres : aucun (confirmation déjà faite par l'appelant).
+# Effets de bord : écrit le prompt dans chaque CT running ; CT arrêtés ignorés.
+# Retour : 0 si au moins un OK ou aucun échec bloquant, 1 si configs absentes / aucun running / tous en échec.
+setup_custom_ps1_all_local_running() {
+    local confdir
+    if ! confdir=$(local_lxc_conf_dir); then
+        ui_error "configs LXC introuvables (/etc/pve/local). pmxcfs est-il monté ?"
+        return 1
+    fi
+
+    local -a ids=()
+    mapfile -t ids < <(list_local_ct_ids "$confdir")
+    if [[ "${#ids[@]}" -eq 0 ]]; then
+        echo "(aucun conteneur sur ce nœud)"
+        return 1
+    fi
+
+    local -a running=()
+    local -a skipped_stopped=()
+    local ctid status name
+    for ctid in "${ids[@]}"; do
+        status=$(ct_status_safe "$ctid")
+        if [[ "$status" == "running" ]]; then
+            running+=("$ctid")
+        else
+            skipped_stopped+=("$ctid")
+        fi
+    done
+
+    if [[ "${#running[@]}" -eq 0 ]]; then
+        echo "[!] Aucun conteneur running sur ce nœud."
+        return 1
+    fi
+
+    echo "Conteneurs running (cibles) :"
+    printf '%-10s %s\n' "VMID" "Name"
+    for ctid in "${running[@]}"; do
+        name=$(awk -F': *' '/^hostname:/{print $2; exit}' "$confdir/${ctid}.conf" 2>/dev/null || true)
+        if [[ -n "$name" && "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            printf '%-10s %s\n' "$ctid" "$name"
+        else
+            printf '%-10s %s\n' "$ctid" "CT${ctid}"
+        fi
+    done
+    if [[ "${#skipped_stopped[@]}" -gt 0 ]]; then
+        echo ""
+        echo "Ignorés (non running) : ${skipped_stopped[*]}"
+    fi
+    warn_remote_lxc_not_targeted
+    echo ""
+
+    local ok=0 fail=0
+    for ctid in "${running[@]}"; do
+        echo "=== LXC $ctid ==="
+        if install_custom_ps1_in_ct "$ctid"; then
+            echo "[OK] Prompt installé sur $ctid."
+            ok=$((ok + 1))
+        else
+            echo "[!] Échec sur $ctid."
+            fail=$((fail + 1))
+        fi
+    done
+
+    echo "[*] Bilan prompt : $ok OK, $fail échec(s), ${#skipped_stopped[@]} non running."
+    echo "    Nouvelle session shell dans chaque CT pour prendre en compte le PS1."
+    if [[ "$fail" -gt 0 && "$ok" -eq 0 ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# Propose le prompt root surligné : tous les LXC running du nœud, ou un CTID.
+#
+# Paramètres : aucun (confirmation o/n puis éventuellement select_ct).
+# Effets de bord : écrit /etc/profile.d/lxc-postconf-prompt.sh dans le(s) CT.
+# Périmètre : nœud local uniquement (pas de pct exec multi-nœud) ; CT remote signalés.
+# Retour : 0 si OK, 1 si annulation / échec.
+setup_custom_ps1() {
+    local confirm
+    read -rp "Appliquer le prompt à tous les LXC running de ce nœud ? (o/n) : " confirm
+    if [[ "$confirm" == "o" ]]; then
+        setup_custom_ps1_all_local_running
+        return $?
+    fi
+
+    select_ct || return 1
+    if ! install_custom_ps1_in_ct "$CTID"; then
+        ui_error "échec installation du prompt sur ${CTID}."
+        return 1
+    fi
     echo "[OK] Prompt installé (/etc/profile.d/lxc-postconf-prompt.sh). Ouvrez une nouvelle session shell."
 }
 
